@@ -1,84 +1,54 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path = require('path')
-const Database = require('better-sqlite3')
+const fs = require('fs')
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
-let db
 let win
+let dataPath
+let store = { clients: [], orders: [], orderItems: [], printTypes: [], assets: [] }
 
-function initDb() {
-  const dbPath = path.join(app.getPath('userData'), 'printflow.db')
-  db = new Database(dbPath)
+// ── JSON store helpers ────────────────────────────────────────────────────────
+function load() {
+  try {
+    if (fs.existsSync(dataPath)) {
+      store = JSON.parse(fs.readFileSync(dataPath, 'utf8'))
+      store.clients    = store.clients    || []
+      store.orders     = store.orders     || []
+      store.orderItems = store.orderItems || []
+      store.printTypes = store.printTypes || []
+      store.assets     = store.assets     || []
+    }
+  } catch (_) {}
+}
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS clients (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      email TEXT,
-      phone TEXT,
-      notes TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
+function save() {
+  fs.writeFileSync(dataPath, JSON.stringify(store, null, 2), 'utf8')
+}
 
-    CREATE TABLE IF NOT EXISTS print_types (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      description TEXT,
-      base_cost REAL DEFAULT 0
-    );
+function nextId(arr) {
+  return arr.length === 0 ? 1 : Math.max(...arr.map(x => x.id)) + 1
+}
 
-    CREATE TABLE IF NOT EXISTS orders (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      client_id INTEGER NOT NULL,
-      title TEXT NOT NULL,
-      status TEXT DEFAULT 'new',
-      is_rush INTEGER DEFAULT 0,
-      due_date TEXT,
-      notes TEXT,
-      garment_cost REAL DEFAULT 0,
-      ink_cost REAL DEFAULT 0,
-      sell_price REAL DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
-    );
+function now() {
+  return new Date().toISOString()
+}
 
-    CREATE TABLE IF NOT EXISTS order_items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      order_id INTEGER NOT NULL,
-      print_type_id INTEGER,
-      description TEXT,
-      quantity INTEGER DEFAULT 1,
-      size_breakdown TEXT,
-      unit_price REAL DEFAULT 0,
-      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
-      FOREIGN KEY (print_type_id) REFERENCES print_types(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS assets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      client_id INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      file_path TEXT NOT NULL,
-      notes TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
-    );
-  `)
-
-  // Seed default print types if empty
-  const count = db.prepare('SELECT COUNT(*) as c FROM print_types').get()
-  if (count.c === 0) {
-    const insert = db.prepare('INSERT INTO print_types (name, description, base_cost) VALUES (?, ?, ?)')
-    insert.run('DTG Chest', 'Left chest or small chest print', 3.50)
-    insert.run('DTG Full Front', 'Full front garment print', 6.00)
-    insert.run('DTG Full Back', 'Full back garment print', 6.00)
-    insert.run('DTG Full Front + Back', 'Full front and back combo', 10.00)
-    insert.run('DTG Sleeve', 'Sleeve print', 2.50)
-    insert.run('DTG All-Over', 'All-over sublimation/DTG print', 14.00)
+function seedPrintTypes() {
+  if (store.printTypes.length === 0) {
+    store.printTypes = [
+      { id: 1, name: 'DTG All-Over',        description: 'All-over sublimation/DTG print',  base_cost: 14.00 },
+      { id: 2, name: 'DTG Chest',           description: 'Left chest or small chest print', base_cost: 3.50  },
+      { id: 3, name: 'DTG Full Back',       description: 'Full back garment print',          base_cost: 6.00  },
+      { id: 4, name: 'DTG Full Front',      description: 'Full front garment print',         base_cost: 6.00  },
+      { id: 5, name: 'DTG Full Front + Back', description: 'Full front and back combo',      base_cost: 10.00 },
+      { id: 6, name: 'DTG Sleeve',          description: 'Sleeve print',                     base_cost: 2.50  },
+    ]
+    save()
   }
 }
 
+// ── Window ────────────────────────────────────────────────────────────────────
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -103,7 +73,9 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  initDb()
+  dataPath = path.join(app.getPath('userData'), 'printflow.json')
+  load()
+  seedPrintTypes()
   createWindow()
 })
 
@@ -111,12 +83,12 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-// ── Window controls ──────────────────────────────────────────────────────────
+// ── Window controls ───────────────────────────────────────────────────────────
 ipcMain.on('win:minimize', () => win.minimize())
 ipcMain.on('win:maximize', () => win.isMaximized() ? win.unmaximize() : win.maximize())
 ipcMain.on('win:close', () => win.close())
 
-// ── File dialog ──────────────────────────────────────────────────────────────
+// ── File dialog ───────────────────────────────────────────────────────────────
 ipcMain.handle('dialog:openFile', async () => {
   const result = await dialog.showOpenDialog(win, {
     properties: ['openFile', 'multiSelections'],
@@ -128,133 +100,199 @@ ipcMain.handle('dialog:openFile', async () => {
   return result.canceled ? [] : result.filePaths
 })
 
-// ── Clients ──────────────────────────────────────────────────────────────────
+// ── Clients ───────────────────────────────────────────────────────────────────
 ipcMain.handle('clients:list', () => {
-  return db.prepare(`
-    SELECT c.*, COUNT(o.id) as order_count
-    FROM clients c
-    LEFT JOIN orders o ON o.client_id = c.id
-    GROUP BY c.id
-    ORDER BY c.name
-  `).all()
+  return store.clients
+    .map(c => ({
+      ...c,
+      order_count: store.orders.filter(o => o.client_id === c.id).length,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name))
 })
 
 ipcMain.handle('clients:create', (_, data) => {
-  const { lastInsertRowid } = db.prepare(
-    'INSERT INTO clients (name, email, phone, notes) VALUES (?, ?, ?, ?)'
-  ).run(data.name, data.email || null, data.phone || null, data.notes || null)
-  return db.prepare('SELECT * FROM clients WHERE id = ?').get(lastInsertRowid)
+  const client = { id: nextId(store.clients), name: data.name, email: data.email || '', phone: data.phone || '', notes: data.notes || '', created_at: now() }
+  store.clients.push(client)
+  save()
+  return client
 })
 
 ipcMain.handle('clients:update', (_, data) => {
-  db.prepare('UPDATE clients SET name=?, email=?, phone=?, notes=? WHERE id=?')
-    .run(data.name, data.email || null, data.phone || null, data.notes || null, data.id)
-  return db.prepare('SELECT * FROM clients WHERE id = ?').get(data.id)
+  const idx = store.clients.findIndex(c => c.id === data.id)
+  if (idx !== -1) { store.clients[idx] = { ...store.clients[idx], name: data.name, email: data.email || '', phone: data.phone || '', notes: data.notes || '' }; save() }
+  return store.clients[idx]
 })
 
 ipcMain.handle('clients:delete', (_, id) => {
-  db.prepare('DELETE FROM clients WHERE id = ?').run(id)
+  store.clients     = store.clients.filter(c => c.id !== id)
+  const orderIds    = store.orders.filter(o => o.client_id === id).map(o => o.id)
+  store.orders      = store.orders.filter(o => o.client_id !== id)
+  store.orderItems  = store.orderItems.filter(i => !orderIds.includes(i.order_id))
+  store.assets      = store.assets.filter(a => a.client_id !== id)
+  save()
   return { ok: true }
 })
 
-// ── Orders ───────────────────────────────────────────────────────────────────
+// ── Orders ────────────────────────────────────────────────────────────────────
 ipcMain.handle('orders:list', (_, clientId) => {
-  const q = clientId
-    ? 'SELECT o.*, c.name as client_name FROM orders o JOIN clients c ON c.id = o.client_id WHERE o.client_id = ? ORDER BY o.created_at DESC'
-    : 'SELECT o.*, c.name as client_name FROM orders o JOIN clients c ON c.id = o.client_id ORDER BY o.created_at DESC'
-  return clientId ? db.prepare(q).all(clientId) : db.prepare(q).all()
+  const clientMap = Object.fromEntries(store.clients.map(c => [c.id, c.name]))
+  return store.orders
+    .filter(o => clientId ? o.client_id === clientId : true)
+    .map(o => ({ ...o, client_name: clientMap[o.client_id] || '' }))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
 })
 
 ipcMain.handle('orders:get', (_, id) => {
-  const order = db.prepare('SELECT o.*, c.name as client_name FROM orders o JOIN clients c ON c.id = o.client_id WHERE o.id = ?').get(id)
+  const order = store.orders.find(o => o.id === id)
   if (!order) return null
-  order.items = db.prepare('SELECT oi.*, pt.name as print_type_name FROM order_items oi LEFT JOIN print_types pt ON pt.id = oi.print_type_id WHERE oi.order_id = ?').all(id)
-  return order
+  const clientMap  = Object.fromEntries(store.clients.map(c => [c.id, c.name]))
+  const ptMap      = Object.fromEntries(store.printTypes.map(p => [p.id, p.name]))
+  return {
+    ...order,
+    client_name: clientMap[order.client_id] || '',
+    items: store.orderItems
+      .filter(i => i.order_id === id)
+      .map(i => ({ ...i, print_type_name: ptMap[i.print_type_id] || '' })),
+  }
 })
 
 ipcMain.handle('orders:create', (_, data) => {
-  const { lastInsertRowid } = db.prepare(
-    'INSERT INTO orders (client_id, title, status, is_rush, due_date, notes, garment_cost, ink_cost, sell_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(data.client_id, data.title, data.status || 'new', data.is_rush ? 1 : 0, data.due_date || null, data.notes || null, data.garment_cost || 0, data.ink_cost || 0, data.sell_price || 0)
-  return db.prepare('SELECT * FROM orders WHERE id = ?').get(lastInsertRowid)
+  const order = {
+    id: nextId(store.orders),
+    client_id:    Number(data.client_id),
+    title:        data.title,
+    status:       data.status || 'new',
+    is_rush:      data.is_rush ? 1 : 0,
+    due_date:     data.due_date || '',
+    notes:        data.notes || '',
+    garment_cost: Number(data.garment_cost) || 0,
+    ink_cost:     Number(data.ink_cost) || 0,
+    sell_price:   Number(data.sell_price) || 0,
+    created_at:   now(),
+  }
+  store.orders.push(order)
+  save()
+  return order
 })
 
 ipcMain.handle('orders:update', (_, data) => {
-  db.prepare('UPDATE orders SET client_id=?, title=?, status=?, is_rush=?, due_date=?, notes=?, garment_cost=?, ink_cost=?, sell_price=? WHERE id=?')
-    .run(data.client_id, data.title, data.status, data.is_rush ? 1 : 0, data.due_date || null, data.notes || null, data.garment_cost || 0, data.ink_cost || 0, data.sell_price || 0, data.id)
-  return db.prepare('SELECT * FROM orders WHERE id = ?').get(data.id)
+  const idx = store.orders.findIndex(o => o.id === data.id)
+  if (idx !== -1) {
+    store.orders[idx] = {
+      ...store.orders[idx],
+      client_id:    Number(data.client_id),
+      title:        data.title,
+      status:       data.status,
+      is_rush:      data.is_rush ? 1 : 0,
+      due_date:     data.due_date || '',
+      notes:        data.notes || '',
+      garment_cost: Number(data.garment_cost) || 0,
+      ink_cost:     Number(data.ink_cost) || 0,
+      sell_price:   Number(data.sell_price) || 0,
+    }
+    save()
+  }
+  return store.orders[idx]
 })
 
 ipcMain.handle('orders:delete', (_, id) => {
-  db.prepare('DELETE FROM orders WHERE id = ?').run(id)
+  store.orders     = store.orders.filter(o => o.id !== id)
+  store.orderItems = store.orderItems.filter(i => i.order_id !== id)
+  save()
   return { ok: true }
 })
 
 // ── Order items ───────────────────────────────────────────────────────────────
 ipcMain.handle('orderItems:save', (_, { orderId, items }) => {
-  db.prepare('DELETE FROM order_items WHERE order_id = ?').run(orderId)
-  const insert = db.prepare('INSERT INTO order_items (order_id, print_type_id, description, quantity, size_breakdown, unit_price) VALUES (?, ?, ?, ?, ?, ?)')
+  store.orderItems = store.orderItems.filter(i => i.order_id !== orderId)
+  let id = nextId(store.orderItems)
   for (const item of items) {
-    insert.run(orderId, item.print_type_id || null, item.description || null, item.quantity || 1, item.size_breakdown || null, item.unit_price || 0)
+    store.orderItems.push({
+      id: id++,
+      order_id:      orderId,
+      print_type_id: item.print_type_id ? Number(item.print_type_id) : null,
+      description:   item.description || '',
+      quantity:      Number(item.quantity) || 1,
+      size_breakdown: item.size_breakdown || '',
+      unit_price:    Number(item.unit_price) || 0,
+    })
   }
+  save()
   return { ok: true }
 })
 
 // ── Print types ───────────────────────────────────────────────────────────────
 ipcMain.handle('printTypes:list', () => {
-  return db.prepare('SELECT * FROM print_types ORDER BY name').all()
+  return [...store.printTypes].sort((a, b) => a.name.localeCompare(b.name))
 })
 
 ipcMain.handle('printTypes:create', (_, data) => {
-  const { lastInsertRowid } = db.prepare('INSERT INTO print_types (name, description, base_cost) VALUES (?, ?, ?)')
-    .run(data.name, data.description || null, data.base_cost || 0)
-  return db.prepare('SELECT * FROM print_types WHERE id = ?').get(lastInsertRowid)
+  const pt = { id: nextId(store.printTypes), name: data.name, description: data.description || '', base_cost: Number(data.base_cost) || 0 }
+  store.printTypes.push(pt)
+  save()
+  return pt
 })
 
 ipcMain.handle('printTypes:update', (_, data) => {
-  db.prepare('UPDATE print_types SET name=?, description=?, base_cost=? WHERE id=?')
-    .run(data.name, data.description || null, data.base_cost || 0, data.id)
-  return db.prepare('SELECT * FROM print_types WHERE id = ?').get(data.id)
+  const idx = store.printTypes.findIndex(p => p.id === data.id)
+  if (idx !== -1) { store.printTypes[idx] = { ...store.printTypes[idx], name: data.name, description: data.description || '', base_cost: Number(data.base_cost) || 0 }; save() }
+  return store.printTypes[idx]
 })
 
 ipcMain.handle('printTypes:delete', (_, id) => {
-  db.prepare('DELETE FROM print_types WHERE id = ?').run(id)
+  store.printTypes = store.printTypes.filter(p => p.id !== id)
+  save()
   return { ok: true }
 })
 
 // ── Assets ────────────────────────────────────────────────────────────────────
 ipcMain.handle('assets:list', (_, clientId) => {
-  const q = clientId
-    ? 'SELECT a.*, c.name as client_name FROM assets a JOIN clients c ON c.id = a.client_id WHERE a.client_id = ? ORDER BY a.created_at DESC'
-    : 'SELECT a.*, c.name as client_name FROM assets a JOIN clients c ON c.id = a.client_id ORDER BY a.created_at DESC'
-  return clientId ? db.prepare(q).all(clientId) : db.prepare(q).all()
+  const clientMap = Object.fromEntries(store.clients.map(c => [c.id, c.name]))
+  return store.assets
+    .filter(a => clientId ? a.client_id === clientId : true)
+    .map(a => ({ ...a, client_name: clientMap[a.client_id] || '' }))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
 })
 
 ipcMain.handle('assets:create', (_, data) => {
-  const { lastInsertRowid } = db.prepare('INSERT INTO assets (client_id, name, file_path, notes) VALUES (?, ?, ?, ?)')
-    .run(data.client_id, data.name, data.file_path, data.notes || null)
-  return db.prepare('SELECT * FROM assets WHERE id = ?').get(lastInsertRowid)
+  const asset = { id: nextId(store.assets), client_id: Number(data.client_id), name: data.name, file_path: data.file_path, notes: data.notes || '', created_at: now() }
+  store.assets.push(asset)
+  save()
+  return asset
 })
 
 ipcMain.handle('assets:update', (_, data) => {
-  db.prepare('UPDATE assets SET name=?, file_path=?, notes=? WHERE id=?')
-    .run(data.name, data.file_path, data.notes || null, data.id)
-  return db.prepare('SELECT * FROM assets WHERE id = ?').get(data.id)
+  const idx = store.assets.findIndex(a => a.id === data.id)
+  if (idx !== -1) { store.assets[idx] = { ...store.assets[idx], name: data.name, file_path: data.file_path, notes: data.notes || '' }; save() }
+  return store.assets[idx]
 })
 
 ipcMain.handle('assets:delete', (_, id) => {
-  db.prepare('DELETE FROM assets WHERE id = ?').run(id)
+  store.assets = store.assets.filter(a => a.id !== id)
+  save()
   return { ok: true }
 })
 
 // ── Dashboard stats ───────────────────────────────────────────────────────────
 ipcMain.handle('stats:get', () => {
-  const totalOrders = db.prepare('SELECT COUNT(*) as c FROM orders').get().c
-  const activeOrders = db.prepare("SELECT COUNT(*) as c FROM orders WHERE status NOT IN ('shipped','invoiced')").get().c
-  const totalClients = db.prepare('SELECT COUNT(*) as c FROM clients').get().c
-  const revenue = db.prepare("SELECT COALESCE(SUM(sell_price),0) as total FROM orders WHERE status IN ('shipped','invoiced')").get().total
-  const costs = db.prepare("SELECT COALESCE(SUM(garment_cost + ink_cost),0) as total FROM orders WHERE status IN ('shipped','invoiced')").get().total
-  const rushOrders = db.prepare("SELECT COUNT(*) as c FROM orders WHERE is_rush=1 AND status NOT IN ('shipped','invoiced')").get().c
-  const recentOrders = db.prepare("SELECT o.*, c.name as client_name FROM orders o JOIN clients c ON c.id=o.client_id ORDER BY o.created_at DESC LIMIT 5").all()
-  return { totalOrders, activeOrders, totalClients, revenue, costs, profit: revenue - costs, rushOrders, recentOrders }
+  const billed      = store.orders.filter(o => ['shipped', 'invoiced'].includes(o.status))
+  const active      = store.orders.filter(o => !['shipped', 'invoiced'].includes(o.status))
+  const revenue     = billed.reduce((s, o) => s + o.sell_price, 0)
+  const costs       = billed.reduce((s, o) => s + o.garment_cost + o.ink_cost, 0)
+  const rushOrders  = active.filter(o => o.is_rush === 1).length
+  const clientMap   = Object.fromEntries(store.clients.map(c => [c.id, c.name]))
+  const recentOrders = [...store.orders]
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, 5)
+    .map(o => ({ ...o, client_name: clientMap[o.client_id] || '' }))
+  return {
+    totalOrders:  store.orders.length,
+    activeOrders: active.length,
+    totalClients: store.clients.length,
+    revenue,
+    costs,
+    profit: revenue - costs,
+    rushOrders,
+    recentOrders,
+  }
 })

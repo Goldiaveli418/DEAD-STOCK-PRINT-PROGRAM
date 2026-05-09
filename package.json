@@ -13,7 +13,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "better-sqlite3": "^9.4.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
@@ -39,10 +38,6 @@
     "directories": {
       "output": "release"
     },
-    "asar": true,
-    "asarUnpack": [
-      "node_modules/better-sqlite3/**/*"
-    ],
     "mac": {
       "category": "public.app-category.productivity",
       "target": [

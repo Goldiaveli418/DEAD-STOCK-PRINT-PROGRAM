@@ -19,12 +19,9 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install --ignore-scripts
+        run: npm install
 
-      - name: Rebuild native modules for Electron
-        run: npx electron-rebuild -f -w better-sqlite3
-
-      - name: Build Vite + Electron (Mac)
+      - name: Build Vite + package DMG
         run: npm run dist:mac
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -49,12 +46,9 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install --ignore-scripts
+        run: npm install
 
-      - name: Rebuild native modules for Electron
-        run: npx electron-rebuild -f -w better-sqlite3
-
-      - name: Build Vite + Electron (Windows)
+      - name: Build Vite + package EXE
         run: npm run dist:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -93,18 +87,11 @@ jobs:
           body: |
             ## PrintFlow ${{ github.ref_name }}
 
-            DTG printing workflow manager — manage clients, orders, graphic assets, and ink pricing.
+            DTG printing workflow manager — clients, orders, graphic assets, and ink pricing.
 
             ### Downloads
             - **Mac** — download the `.dmg`, open it, drag PrintFlow to Applications
             - **Windows** — download the `.exe` installer, run it, follow the prompts
-
-            ### What's included
-            - Dashboard with revenue & profit overview
-            - Client management
-            - Order tracking with status pipeline (New → Art → Printing → Done → Shipped → Invoiced)
-            - Graphic asset library per client (file path references)
-            - Pricing / ink cost table per print type (DTG Chest, Full Front, Full Back, etc.)
           files: |
             artifacts/mac/*.dmg
             artifacts/win/*.exe
