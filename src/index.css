@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: #080a0f;
+  color: #e2e8f0;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: #0d1017; }
+::-webkit-scrollbar-thumb { background: #1e3a2a; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #22c55e; }
+
+.font-mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+
+.glass {
+  background: rgba(13, 16, 23, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(34, 197, 94, 0.12);
+}
+
+.card {
+  @apply rounded-xl bg-[#0d1017] border border-white/5;
+}
+
+.card-glow {
+  @apply card;
+  box-shadow: 0 0 0 1px rgba(34,197,94,0.12), 0 4px 24px rgba(0,0,0,0.4);
+}
+
+.btn-primary {
+  @apply px-4 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white font-medium text-sm transition-all duration-150 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed;
+}
+
+.btn-ghost {
+  @apply px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 font-medium text-sm transition-all duration-150 active:scale-95;
+}
+
+.btn-danger {
+  @apply px-4 py-2 rounded-lg bg-red-600/80 hover:bg-red-500 text-white font-medium text-sm transition-all duration-150 active:scale-95 disabled:opacity-40;
+}
+
+.input {
+  @apply w-full px-3 py-2 rounded-lg bg-[#181c2a] border border-white/10 text-slate-100 text-sm placeholder-slate-500 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500/30 transition-all;
+}
+
+.label {
+  @apply block text-xs font-medium text-slate-400 mb-1.5;
+}
+
+.drag-region { -webkit-app-region: drag; }
+.no-drag { -webkit-app-region: no-drag; }
+
+.status-new      { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-500/20 text-slate-300 border border-slate-500/30; }
+.status-art      { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-500/20 text-blue-300 border border-blue-500/30; }
+.status-printing { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-500/20 text-yellow-300 border border-yellow-500/30; }
+.status-done     { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-500/20 text-green-300 border border-green-500/30; }
+.status-shipped  { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30; }
+.status-invoiced { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-500/20 text-purple-300 border border-purple-500/30; }
+
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-feed-item { animation: fadeSlideIn 0.2s ease-out forwards; }
