@@ -167,9 +167,11 @@ ipcMain.handle('orders:create', (_, data) => {
     notes:             data.notes || '',
     shirt_brand:       data.shirt_brand || '',
     shirt_color:       data.shirt_color || '',
+    garment_qty:       Number(data.garment_qty) || 0,
     customer_supplied: data.customer_supplied ? 1 : 0,
     garment_cost:      data.customer_supplied ? 0 : (Number(data.garment_cost) || 0),
     ink_cost:          Number(data.ink_cost) || 0,
+    labor_cost:        Number(data.labor_cost) || 0,
     sell_price:        Number(data.sell_price) || 0,
     created_at:        now(),
   }
@@ -191,9 +193,11 @@ ipcMain.handle('orders:update', (_, data) => {
       notes:             data.notes || '',
       shirt_brand:       data.shirt_brand || '',
       shirt_color:       data.shirt_color || '',
+      garment_qty:       Number(data.garment_qty) || 0,
       customer_supplied: data.customer_supplied ? 1 : 0,
       garment_cost:      data.customer_supplied ? 0 : (Number(data.garment_cost) || 0),
       ink_cost:          Number(data.ink_cost) || 0,
+      labor_cost:        Number(data.labor_cost) || 0,
       sell_price:        Number(data.sell_price) || 0,
     }
     save()
@@ -284,7 +288,7 @@ ipcMain.handle('stats:get', () => {
   const billed      = store.orders.filter(o => ['shipped', 'invoiced'].includes(o.status))
   const active      = store.orders.filter(o => !['shipped', 'invoiced'].includes(o.status))
   const revenue     = billed.reduce((s, o) => s + o.sell_price, 0)
-  const costs       = billed.reduce((s, o) => s + o.garment_cost + o.ink_cost, 0)
+  const costs       = billed.reduce((s, o) => s + o.garment_cost + o.ink_cost + (o.labor_cost || 0), 0)
   const rushOrders  = active.filter(o => o.is_rush === 1).length
   const clientMap   = Object.fromEntries(store.clients.map(c => [c.id, c.name]))
   const recentOrders = [...store.orders]
