@@ -18,6 +18,9 @@ function load() {
       store.orderItems = store.orderItems || []
       store.printTypes = store.printTypes || []
       store.assets     = store.assets     || []
+      store.interactions = store.interactions || []
+      store.inventory    = store.inventory    || []
+      store.inventoryLog = store.inventoryLog || []
     }
   } catch (_) {}
 }
@@ -162,6 +165,11 @@ ipcMain.handle('orders:get', (_, id) => {
 ipcMain.handle('orders:create', (_, data) => {
   const order = {
     id: nextId(store.orders),
+    invoice_number: (() => {
+      const nums = store.orders.map(o => parseInt((o.invoice_number || '').replace(/\D/g, ''), 10)).filter(n => !isNaN(n))
+      const next = nums.length ? Math.max(...nums) + 1 : 1
+      return `INV-${String(next).padStart(4, '0')}`
+    })(),
     client_id:         Number(data.client_id),
     title:             data.title,
     status:            data.status || 'new',
@@ -190,6 +198,7 @@ ipcMain.handle('orders:create', (_, data) => {
 ipcMain.handle('orders:update', (_, data) => {
   const idx = store.orders.findIndex(o => o.id === data.id)
   if (idx !== -1) {
+    const prevStatus = store.orders[idx]?.status
     store.orders[idx] = {
       ...store.orders[idx],
       client_id:         Number(data.client_id),
@@ -210,6 +219,36 @@ ipcMain.handle('orders:update', (_, data) => {
       sell_price:          Number(data.sell_price) || 0,
       operator_split:      Number(data.operator_split) || 50,
       house_split:         Number(data.house_split) || 50,
+    }
+    // Auto-deduct inventory when status changes to 'printing'
+    if (data.status === 'printing' && prevStatus !== 'printing' && !store.orders[idx].inventory_deducted) {
+      const orderItems = store.orderItems.filter(i => i.order_id === data.id)
+      for (const item of orderItems) {
+        if (item.customer_supplied) continue
+        let sizes = {}
+        try { sizes = JSON.parse(item.size_breakdown || '{}') } catch (_) {}
+        for (const [sz, qty] of Object.entries(sizes)) {
+          const q = Number(qty)
+          if (!q) continue
+          const invIdx = store.inventory.findIndex(inv =>
+            inv.brand.toLowerCase() === (item.shirt_brand || '').toLowerCase() &&
+            inv.color.toLowerCase() === (item.shirt_color || '').toLowerCase() &&
+            inv.size === sz
+          )
+          if (invIdx !== -1) {
+            const before = store.inventory[invIdx].qty_on_hand
+            store.inventory[invIdx].qty_on_hand = Math.max(0, before - q)
+            store.inventoryLog.push({
+              id: nextId(store.inventoryLog),
+              inventory_id: store.inventory[invIdx].id,
+              delta: -q,
+              reason: `Order: ${data.title || data.id}`,
+              created_at: now(),
+            })
+          }
+        }
+      }
+      store.orders[idx].inventory_deducted = 1
     }
     save()
   }
@@ -315,6 +354,99 @@ ipcMain.handle('orderItems:setNotes', (_, { id, notes }) => {
   const idx = store.orderItems.findIndex(i => i.id === id)
   if (idx !== -1) { store.orderItems[idx] = { ...store.orderItems[idx], production_notes: notes }; save() }
   return { ok: true }
+})
+
+// ── Interactions ──────────────────────────────────────────────────────────────
+ipcMain.handle('interactions:list', (_, clientId) => {
+  return store.interactions
+    .filter(i => i.client_id === clientId)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+})
+
+ipcMain.handle('interactions:create', (_, data) => {
+  const item = {
+    id:        nextId(store.interactions),
+    client_id: Number(data.client_id),
+    order_id:  data.order_id || null,
+    note:      data.note || '',
+    created_at: now(),
+  }
+  store.interactions.push(item)
+  save()
+  return item
+})
+
+ipcMain.handle('interactions:delete', (_, id) => {
+  store.interactions = store.interactions.filter(i => i.id !== id)
+  save()
+  return { ok: true }
+})
+
+// ── Inventory ─────────────────────────────────────────────────────────────────
+ipcMain.handle('inventory:list', () => {
+  return [...store.inventory].sort((a, b) => {
+    const k = x => `${x.brand}|${x.style}|${x.color}|${x.size}`
+    return k(a).localeCompare(k(b))
+  })
+})
+
+ipcMain.handle('inventory:create', (_, data) => {
+  const item = {
+    id:            nextId(store.inventory),
+    brand:         data.brand || '',
+    style:         data.style || '',
+    color:         data.color || '',
+    size:          data.size || '',
+    qty_on_hand:   Number(data.qty_on_hand) || 0,
+    reorder_point: Number(data.reorder_point) || 5,
+    cost_per_unit: Number(data.cost_per_unit) || 0,
+    notes:         data.notes || '',
+    created_at:    now(),
+  }
+  store.inventory.push(item)
+  save()
+  return item
+})
+
+ipcMain.handle('inventory:update', (_, data) => {
+  const idx = store.inventory.findIndex(i => i.id === data.id)
+  if (idx !== -1) {
+    store.inventory[idx] = {
+      ...store.inventory[idx],
+      brand:         data.brand || '',
+      style:         data.style || '',
+      color:         data.color || '',
+      size:          data.size || '',
+      qty_on_hand:   Number(data.qty_on_hand) ?? store.inventory[idx].qty_on_hand,
+      reorder_point: Number(data.reorder_point) ?? store.inventory[idx].reorder_point,
+      cost_per_unit: Number(data.cost_per_unit) ?? store.inventory[idx].cost_per_unit,
+      notes:         data.notes || '',
+    }
+    save()
+  }
+  return store.inventory[idx]
+})
+
+ipcMain.handle('inventory:delete', (_, id) => {
+  store.inventory = store.inventory.filter(i => i.id !== id)
+  save()
+  return { ok: true }
+})
+
+ipcMain.handle('inventory:adjust', (_, { id, delta, reason }) => {
+  const idx = store.inventory.findIndex(i => i.id === id)
+  if (idx !== -1) {
+    store.inventory[idx].qty_on_hand = Math.max(0, store.inventory[idx].qty_on_hand + Number(delta))
+    store.inventoryLog.push({
+      id:           nextId(store.inventoryLog),
+      inventory_id: id,
+      delta:        Number(delta),
+      reason:       reason || '',
+      created_at:   now(),
+    })
+    save()
+  }
+  return store.inventory[idx]
 })
 
 // ── Print types ───────────────────────────────────────────────────────────────
@@ -473,6 +605,56 @@ ipcMain.handle('search:all', (_, query) => {
   }
 })
 
+// ── Reports ───────────────────────────────────────────────────────────────────
+ipcMain.handle('reports:get', (_, { from, to } = {}) => {
+  const inRange = o => {
+    if (from && o.created_at < from) return false
+    if (to   && o.created_at > to)   return false
+    return true
+  }
+  const all    = store.orders.filter(inRange)
+  const billed = all.filter(o => ['shipped', 'invoiced'].includes(o.status))
+  const clientMap = Object.fromEntries(store.clients.map(c => [c.id, c.name]))
+
+  const revenue      = billed.reduce((s, o) => s + (o.sell_price || 0), 0)
+  const garmentCost  = billed.reduce((s, o) => s + (o.garment_cost || 0), 0)
+  const inkCost      = billed.reduce((s, o) => s + (o.ink_cost || 0), 0)
+  const laborCost    = billed.reduce((s, o) => s + (o.labor_cost || 0), 0)
+  const profit       = revenue - garmentCost - inkCost
+
+  let operatorEarnings = 0, houseEarnings = 0
+  for (const o of billed) {
+    const p = (o.sell_price || 0) - (o.garment_cost || 0) - (o.ink_cost || 0)
+    operatorEarnings += p * (o.operator_split || 50) / 100
+    houseEarnings    += p * (o.house_split    || 50) / 100
+  }
+
+  const clientTotals = {}
+  for (const o of billed) {
+    const name = clientMap[o.client_id] || 'Unknown'
+    if (!clientTotals[name]) clientTotals[name] = { revenue: 0, cost: 0, orders: 0, profit: 0 }
+    const cost = (o.garment_cost || 0) + (o.ink_cost || 0)
+    clientTotals[name].revenue += o.sell_price || 0
+    clientTotals[name].cost    += cost
+    clientTotals[name].profit  += (o.sell_price || 0) - cost
+    clientTotals[name].orders  += 1
+  }
+
+  const byStatus = {}
+  for (const o of all) byStatus[o.status] = (byStatus[o.status] || 0) + 1
+
+  return {
+    revenue, garmentCost, inkCost, laborCost, profit,
+    operatorEarnings, houseEarnings,
+    totalOrders: all.length,
+    billedOrders: billed.length,
+    byClient: Object.entries(clientTotals)
+      .map(([name, d]) => ({ name, ...d }))
+      .sort((a, b) => b.revenue - a.revenue),
+    byStatus,
+  }
+})
+
 // ── Invoice helpers ───────────────────────────────────────────────────────────
 const INVOICE_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL']
 
@@ -607,7 +789,7 @@ body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#1a1a1a;
 .rush{display:inline-block;background:#fee2e2;color:#dc2626;font-weight:700;padding:1px 7px;border-radius:4px;font-size:11px}
 
 /* Order info bar */
-.info-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;margin-bottom:28px}
+.info-bar{display:grid;grid-template-columns:repeat(5,1fr);gap:0;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;margin-bottom:28px}
 .info-cell{padding:10px 14px;border-right:1px solid #e5e7eb}
 .info-cell:last-child{border-right:none}
 .info-cell label{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:#9ca3af;margin-bottom:3px}
@@ -661,6 +843,7 @@ body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#1a1a1a;
 </div>
 
 <div class="info-bar">
+  <div class="info-cell"><label>Invoice</label><span>${order.invoice_number || '—'}</span></div>
   <div class="info-cell"><label>Order</label><span>${order.title}</span></div>
   <div class="info-cell"><label>Total Garments</label><span>${order.garment_qty || 0} pcs</span></div>
   <div class="info-cell"><label>Items</label><span>${items.length}</span></div>

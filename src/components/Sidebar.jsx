@@ -5,7 +5,10 @@ const NAV = [
   { id: 'clients',    icon: '◈', label: 'Clients'    },
   { id: 'orders',     icon: '◎', label: 'Orders'     },
   { id: 'production', icon: '✓', label: 'Production' },
+  { id: 'schedule',   icon: '◫', label: 'Schedule'   },
   { id: 'assets',     icon: '⊞', label: 'Assets'     },
+  { id: 'inventory',  icon: '▤', label: 'Inventory'  },
+  { id: 'reports',    icon: '◑', label: 'Reports'    },
   { id: 'pricing',    icon: '◷', label: 'Pricing'    },
 ]
 

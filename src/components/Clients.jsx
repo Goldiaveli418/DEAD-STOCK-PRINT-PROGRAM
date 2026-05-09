@@ -1,4 +1,6 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
+
+const INTERACTION_TYPES = ['Call', 'Email', 'Meeting', 'Quote', 'Note', 'Other']
 
 function Modal({ title, onClose, children }) {
   return (
@@ -46,11 +48,121 @@ function ClientForm({ initial, onSave, onCancel }) {
   )
 }
 
+function InteractionLog({ clientId }) {
+  const [items, setItems]   = useState([])
+  const [adding, setAdding] = useState(false)
+  const [form, setForm]     = useState({ type: 'Note', notes: '' })
+
+  const load = useCallback(() => {
+    window.api.interactions.list(clientId).then(data => setItems(data || []))
+  }, [clientId])
+
+  useEffect(() => { load() }, [load])
+
+  async function handleAdd() {
+    if (!form.notes.trim()) return
+    await window.api.interactions.create({ client_id: clientId, type: form.type, notes: form.notes })
+    setForm({ type: 'Note', notes: '' })
+    setAdding(false)
+    load()
+  }
+
+  async function handleDelete(id) {
+    await window.api.interactions.delete(id)
+    load()
+  }
+
+  function relativeTime(ts) {
+    if (!ts) return ''
+    const diff = Date.now() - new Date(ts).getTime()
+    const mins = Math.floor(diff / 60000)
+    if (mins < 1)   return 'Just now'
+    if (mins < 60)  return `${mins}m ago`
+    const hrs = Math.floor(mins / 60)
+    if (hrs < 24)   return `${hrs}h ago`
+    const days = Math.floor(hrs / 24)
+    if (days < 7)   return `${days}d ago`
+    return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  }
+
+  const TYPE_COLOR = {
+    Call:    'text-blue-400 bg-blue-500/10 border-blue-500/20',
+    Email:   'text-purple-400 bg-purple-500/10 border-purple-500/20',
+    Meeting: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20',
+    Quote:   'text-green-400 bg-green-500/10 border-green-500/20',
+    Note:    'text-slate-400 bg-white/5 border-white/10',
+    Other:   'text-slate-400 bg-white/5 border-white/10',
+  }
+
+  return (
+    <div className="border-t border-white/5 mt-3 pt-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] text-slate-600 uppercase tracking-wider font-semibold">Interaction Log</span>
+        <button
+          onClick={() => setAdding(a => !a)}
+          className="text-[10px] px-2 py-0.5 rounded border border-white/8 text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-colors"
+        >
+          + Log
+        </button>
+      </div>
+
+      {adding && (
+        <div className="space-y-2 p-2.5 rounded-lg bg-black/30 border border-white/8">
+          <div className="flex gap-2">
+            <select
+              className="input-sm"
+              value={form.type}
+              onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
+            >
+              {INTERACTION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <textarea
+            className="w-full bg-black/30 border border-white/8 rounded-lg text-xs text-slate-300 placeholder:text-slate-600 px-2.5 py-1.5 resize-none outline-none focus:border-white/15 transition-colors"
+            rows={2}
+            placeholder="Notes…"
+            value={form.notes}
+            onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+            autoFocus
+          />
+          <div className="flex gap-1.5">
+            <button onClick={handleAdd} className="btn-xs bg-green-500/20 text-green-300 border-green-500/20 hover:bg-green-500/30">Save</button>
+            <button onClick={() => setAdding(false)} className="btn-xs">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {items.length === 0 && !adding && (
+        <div className="text-[11px] text-slate-700 py-1">No interactions logged yet.</div>
+      )}
+
+      <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+        {items.map(item => (
+          <div key={item.id} className="flex gap-2 group">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${TYPE_COLOR[item.type] || TYPE_COLOR.Other}`}>{item.type}</span>
+                <span className="text-[10px] text-slate-600">{relativeTime(item.created_at)}</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-snug line-clamp-2">{item.notes}</p>
+            </div>
+            <button
+              onClick={() => handleDelete(item.id)}
+              className="opacity-0 group-hover:opacity-100 text-slate-700 hover:text-red-400 transition-all text-xs shrink-0 mt-0.5"
+            >✕</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function Clients({ onGoToOrders, onGoToAssets }) {
-  const [clients, setClients] = useState([])
-  const [modal, setModal] = useState(null) // null | 'add' | {client}
-  const [search, setSearch] = useState('')
-  const [deleting, setDeleting] = useState(null)
+  const [clients, setClients]     = useState([])
+  const [modal, setModal]         = useState(null)
+  const [search, setSearch]       = useState('')
+  const [deleting, setDeleting]   = useState(null)
+  const [expandedLog, setExpandedLog] = useState({})
 
   const load = () => window.api.clients.list().then(setClients)
   useEffect(() => { load() }, [])
@@ -74,6 +186,10 @@ export default function Clients({ onGoToOrders, onGoToAssets }) {
     await window.api.clients.delete(id)
     setDeleting(null)
     load()
+  }
+
+  function toggleLog(id) {
+    setExpandedLog(e => ({ ...e, [id]: !e[id] }))
   }
 
   return (
@@ -121,11 +237,19 @@ export default function Clients({ onGoToOrders, onGoToAssets }) {
                 {c.notes && <p className="text-xs text-slate-500 mb-3 line-clamp-2">{c.notes}</p>}
                 <div className="flex items-center gap-2 pt-2 border-t border-white/5">
                   <span className="text-xs text-slate-500">{c.order_count} order{c.order_count !== 1 ? 's' : ''}</span>
+                  <button
+                    onClick={() => toggleLog(c.id)}
+                    className={`text-xs px-2 py-0.5 rounded border transition-colors ${expandedLog[c.id] ? 'border-slate-500/30 text-slate-400 bg-white/5' : 'border-white/8 text-slate-600 hover:text-slate-400 hover:bg-white/5'}`}
+                  >
+                    {expandedLog[c.id] ? 'Hide log' : 'Log'}
+                  </button>
                   <div className="ml-auto flex gap-1.5">
                     <button onClick={() => onGoToOrders(c.id)} className="text-xs px-2 py-1 rounded bg-green-600/15 text-green-400 hover:bg-green-600/25 border border-green-500/20 transition-colors">Orders</button>
                     <button onClick={() => onGoToAssets(c.id)} className="text-xs px-2 py-1 rounded bg-white/5 text-slate-400 hover:bg-white/10 border border-white/10 transition-colors">Assets</button>
                   </div>
                 </div>
+
+                {expandedLog[c.id] && <InteractionLog clientId={c.id} />}
               </div>
             ))}
           </div>

@@ -77,4 +77,25 @@ contextBridge.exposeInMainWorld('api', {
   search: {
     all: (q) => invoke('search:all', q),
   },
+
+  // Interactions
+  interactions: {
+    list:   (clientId) => invoke('interactions:list', clientId),
+    create: (d)        => invoke('interactions:create', d),
+    delete: (id)       => invoke('interactions:delete', id),
+  },
+
+  // Inventory
+  inventory: {
+    list:   ()  => invoke('inventory:list'),
+    create: (d) => invoke('inventory:create', d),
+    update: (d) => invoke('inventory:update', d),
+    delete: (id) => invoke('inventory:delete', id),
+    adjust: (d) => invoke('inventory:adjust', d),
+  },
+
+  // Reports
+  reports: {
+    get: (d) => invoke('reports:get', d),
+  },
 })

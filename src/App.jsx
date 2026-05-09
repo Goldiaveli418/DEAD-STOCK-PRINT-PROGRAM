@@ -7,6 +7,9 @@ import Orders from './components/Orders.jsx'
 import Assets from './components/Assets.jsx'
 import Pricing from './components/Pricing.jsx'
 import Production from './components/Production.jsx'
+import Schedule from './components/Schedule.jsx'
+import Inventory from './components/Inventory.jsx'
+import Reports from './components/Reports.jsx'
 import GlobalSearch from './components/GlobalSearch.jsx'
 
 export default function App() {
@@ -43,7 +46,10 @@ export default function App() {
           {page === 'clients'    && <Clients onGoToOrders={goToOrders} onGoToAssets={goToAssets} />}
           {page === 'orders'     && <Orders clientFilter={clientFilter} onClearFilter={() => setClientFilter(null)} />}
           {page === 'production' && <Production />}
+          {page === 'schedule'   && <Schedule />}
           {page === 'assets'     && <Assets clientFilter={clientFilter} onClearFilter={() => setClientFilter(null)} />}
+          {page === 'inventory'  && <Inventory />}
+          {page === 'reports'    && <Reports />}
           {page === 'pricing'    && <Pricing />}
         </main>
       </div>

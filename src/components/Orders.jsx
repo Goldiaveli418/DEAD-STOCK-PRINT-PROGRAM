@@ -1015,7 +1015,10 @@ export default function Orders({ clientFilter, onClearFilter }) {
                           <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${dueBadge.cls}`}>{dueBadge.label}</span>
                         )}
                       </div>
-                      <div className="text-xs text-slate-400">{o.client_name}</div>
+                      <div className="text-xs text-slate-400 flex items-center gap-2">
+                        {o.client_name}
+                        {o.invoice_number && <span className="font-mono text-slate-600">{o.invoice_number}</span>}
+                      </div>
                       <div className="text-xs text-slate-500 mt-0.5 font-mono">
                         {o.garment_qty ? `${o.garment_qty} pcs` : ''}
                         {o.garment_qty && o.labor_cost ? ' · ' : ''}
