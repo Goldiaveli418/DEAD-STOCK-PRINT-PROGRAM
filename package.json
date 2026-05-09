@@ -1,6 +1,6 @@
 {
   "name": "printflow",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "DTG printing workflow manager",
   "main": "electron/main.js",
   "scripts": {

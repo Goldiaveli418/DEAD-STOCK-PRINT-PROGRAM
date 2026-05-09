@@ -19,6 +19,11 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Sync version from tag
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          npm version $VERSION --no-git-tag-version
+
       - name: Install dependencies
         run: npm install
 
@@ -47,6 +52,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Sync version from tag
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          npm version $VERSION --no-git-tag-version
 
       - name: Install dependencies
         run: npm install
