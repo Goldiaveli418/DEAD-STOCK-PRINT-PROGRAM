@@ -1,0 +1,108 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build-mac:
+    name: Build macOS DMG
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Vite + Electron (Mac)
+        run: npm run dist:mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrintFlow-mac
+          path: release/*.dmg
+          retention-days: 30
+
+  build-win:
+    name: Build Windows EXE
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Vite + Electron (Windows)
+        run: npm run dist:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrintFlow-windows
+          path: release/*.exe
+          retention-days: 30
+
+  release:
+    name: Create GitHub Release
+    needs: [build-mac, build-win]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download Mac artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PrintFlow-mac
+          path: artifacts/mac
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PrintFlow-windows
+          path: artifacts/win
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: PrintFlow ${{ github.ref_name }}
+          body: |
+            ## PrintFlow ${{ github.ref_name }}
+
+            DTG printing workflow manager — manage clients, orders, graphic assets, and ink pricing.
+
+            ### Downloads
+            - **Mac** — download the `.dmg`, open it, drag PrintFlow to Applications
+            - **Windows** — download the `.exe` installer, run it, follow the prompts
+
+            ### What's included
+            - Dashboard with revenue & profit overview
+            - Client management
+            - Order tracking with status pipeline (New → Art → Printing → Done → Shipped → Invoiced)
+            - Graphic asset library per client (file path references)
+            - Pricing / ink cost table per print type (DTG Chest, Full Front, Full Back, etc.)
+          files: |
+            artifacts/mac/*.dmg
+            artifacts/win/*.exe
+          draft: false
+          prerelease: false
