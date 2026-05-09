@@ -260,7 +260,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
   const totalClientGarment = items.reduce((s, i) => s + itemClientGarment(i), 0)
   const totalLabor       = items.reduce((s, i) => s + itemLabor(i), 0)
   const totalQty         = items.reduce((s, i) => s + itemQty(i), 0)
-  const suggestedSell    = totalClientGarment + totalClientInk
+  const suggestedSell    = totalClientGarment + totalClientInk + totalLabor
   const myCost           = totalMyGarment + totalMyInk   // true out-of-pocket
   const sellNum          = Number(form.sell_price || 0)
   const profit           = sellNum - myCost              // labor IS profit
@@ -546,23 +546,28 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
 
                 {/* Item summary */}
                 {qty > 0 && (
-                  <div className="pt-1.5 border-t border-white/5">
-                    <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-center">
+                  <div className="pt-1.5 border-t border-white/5 space-y-1.5">
+                    {/* Client-facing total for this item */}
+                    <div className="flex items-center justify-between px-0.5">
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        Client ink: <span className="text-slate-300">${clientInk.toFixed(2)}</span>
+                        <span className="text-slate-600 mx-1">·</span>
+                        Labor: <span className="text-slate-300">${labor.toFixed(2)}</span>
+                      </span>
+                      <span className="text-[11px] font-mono font-semibold text-green-400">
+                        Item total: ${(clientGmt + clientInk + labor).toFixed(2)}
+                      </span>
+                    </div>
+                    {/* Internal cost vs profit */}
+                    <div className="grid grid-cols-2 gap-1 text-[10px] font-mono text-center">
                       <div className="rounded bg-black/20 p-1.5">
                         <div className="text-slate-600 mb-0.5">My Cost</div>
                         <div className="text-slate-400">${(myGmt + myInk).toFixed(2)}</div>
                       </div>
                       <div className="rounded bg-black/20 p-1.5">
-                        <div className="text-slate-600 mb-0.5">Client Charge</div>
-                        <div className="text-green-400/70">${(clientGmt + clientInk).toFixed(2)}</div>
+                        <div className="text-slate-600 mb-0.5">Margin</div>
+                        <div className={itemProfit >= 0 ? 'text-green-400/80' : 'text-red-400'}>${itemProfit.toFixed(2)}</div>
                       </div>
-                      <div className="rounded bg-black/20 p-1.5">
-                        <div className="text-slate-600 mb-0.5">Labor</div>
-                        <div className="text-slate-400">${labor.toFixed(2)}</div>
-                      </div>
-                    </div>
-                    <div className="text-right text-[10px] font-mono mt-1 text-slate-500">
-                      Item profit: <span className="text-green-400/80">${itemProfit.toFixed(2)}</span>
                     </div>
                   </div>
                 )}
@@ -613,7 +618,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
           <div className="rounded-lg bg-black/20 p-2 text-center">
             <div className="text-green-500/60 mb-0.5">Suggested Sell</div>
             <div className="text-green-400/80">${suggestedSell.toFixed(2)}</div>
-            <div className="text-[9px] text-slate-600 mt-0.5">client garment + ink</div>
+            <div className="text-[9px] text-slate-600 mt-0.5">garment + ink + labor</div>
           </div>
         </div>
       </div>
@@ -626,7 +631,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
         {form.sell_price && (
           <div className={`text-sm font-mono text-right mt-1.5 ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
             Profit: {profit >= 0 ? '+' : ''}${profit.toFixed(2)}
-            <span className="text-xs text-slate-500 ml-2">(includes ${totalLabor.toFixed(2)} labor)</span>
+            <span className="text-xs text-slate-500 ml-2">(labor ${totalLabor.toFixed(2)} + markups)</span>
           </div>
         )}
       </div>
