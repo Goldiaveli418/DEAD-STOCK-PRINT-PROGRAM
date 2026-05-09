@@ -133,7 +133,7 @@ function FillRow({ label, value, onChange, onFill, accent }) {
   )
 }
 
-function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
+function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }) {
   const [form, setForm] = useState(() => {
     const b = initial || {}
     return {
@@ -220,10 +220,14 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
   }
 
   function fillInkCosts(idx, field, val) {
-    setItems(its => its.map((item, i) =>
-      i !== idx ? item
-        : { ...item, [field]: Object.fromEntries(SIZES.map(s => [s, val])) }
-    ))
+    setItems(its => its.map((item, i) => {
+      if (i !== idx) return item
+      const updated = { ...(item[field] || {}) }
+      SIZES.forEach(s => {
+        if (Number(item.sizes?.[s]) > 0) updated[s] = val
+      })
+      return { ...item, [field]: updated }
+    }))
   }
 
   async function pickItemAsset(idx) {
@@ -254,42 +258,65 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
   }
 
   // Totals
-  const totalMyInk       = items.reduce((s, i) => s + itemMyInk(i), 0)
-  const totalClientInk   = items.reduce((s, i) => s + itemClientInk(i), 0)
-  const totalMyGarment   = items.reduce((s, i) => s + itemMyGarment(i), 0)
+  const totalMyInk         = items.reduce((s, i) => s + itemMyInk(i), 0)
+  const totalClientInk     = items.reduce((s, i) => s + itemClientInk(i), 0)
+  const totalMyGarment     = items.reduce((s, i) => s + itemMyGarment(i), 0)
   const totalClientGarment = items.reduce((s, i) => s + itemClientGarment(i), 0)
-  const totalLabor       = items.reduce((s, i) => s + itemLabor(i), 0)
-  const totalQty         = items.reduce((s, i) => s + itemQty(i), 0)
-  const suggestedSell    = totalClientGarment + totalClientInk + totalLabor
-  const myCost           = totalMyGarment + totalMyInk   // true out-of-pocket
-  const sellNum          = Number(form.sell_price || 0)
-  const profit           = sellNum - myCost              // labor IS profit
+  const totalLabor         = items.reduce((s, i) => s + itemLabor(i), 0)
+  const totalQty           = items.reduce((s, i) => s + itemQty(i), 0)
+  const suggestedSell      = totalClientGarment + totalClientInk + totalLabor
+  const myCost             = totalMyGarment + totalMyInk
+  const sellNum            = Number(form.sell_price || 0)
+  const profit             = sellNum - myCost
+
+  const [savedIdx, setSavedIdx] = useState(null)
+  const [savedAll, setSavedAll] = useState(false)
+
+  function serialized() {
+    return items.map(i => ({
+      ...i,
+      quantity:             itemQty(i),
+      size_breakdown:       JSON.stringify(i.sizes || {}),
+      ink_cost_breakdown:   JSON.stringify(i.ink_costs || {}),
+      client_ink_breakdown: JSON.stringify(i.client_ink_costs || {}),
+    }))
+  }
+
+  function orderTotals() {
+    return {
+      ...form,
+      is_rush:             form.is_rush ? 1 : 0,
+      garment_qty:         totalQty,
+      ink_cost:            totalMyInk,
+      client_ink_cost:     totalClientInk,
+      garment_cost:        totalMyGarment,
+      client_garment_cost: totalClientGarment,
+      labor_cost:          totalLabor,
+      customer_supplied:   items.every(i => i.customer_supplied) ? 1 : 0,
+    }
+  }
+
+  async function handleUpdateItem(idx) {
+    if (!form.id) return
+    await window.api.orderItems.save({ orderId: form.id, items: serialized() })
+    await window.api.orders.update(orderTotals())
+    onRefresh?.()
+    setSavedIdx(idx)
+    setTimeout(() => setSavedIdx(null), 1500)
+  }
+
+  async function handleUpdateAll() {
+    if (!form.id) return
+    await window.api.orderItems.save({ orderId: form.id, items: serialized() })
+    await window.api.orders.update(orderTotals())
+    onRefresh?.()
+    setSavedAll(true)
+    setTimeout(() => setSavedAll(false), 1500)
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
-    const serializedItems = items.map(i => ({
-      ...i,
-      quantity:              itemQty(i),
-      size_breakdown:        JSON.stringify(i.sizes || {}),
-      ink_cost_breakdown:    JSON.stringify(i.ink_costs || {}),
-      client_ink_breakdown:  JSON.stringify(i.client_ink_costs || {}),
-    }))
-
-    await onSave(
-      {
-        ...form,
-        is_rush:             form.is_rush ? 1 : 0,
-        garment_qty:         totalQty,
-        ink_cost:            totalMyInk,
-        client_ink_cost:     totalClientInk,
-        garment_cost:        totalMyGarment,
-        client_garment_cost: totalClientGarment,
-        labor_cost:          totalLabor,
-        customer_supplied:   items.every(i => i.customer_supplied) ? 1 : 0,
-      },
-      serializedItems,
-      pendingAssets,
-    )
+    await onSave(orderTotals(), serialized(), pendingAssets)
   }
 
   return (
@@ -569,6 +596,19 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
                         <div className={itemProfit >= 0 ? 'text-green-400/80' : 'text-red-400'}>${itemProfit.toFixed(2)}</div>
                       </div>
                     </div>
+                    {/* Per-item update (editing only) */}
+                    {form.id && (
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateItem(idx)}
+                        className="w-full text-[11px] py-1 rounded-lg border transition-colors font-medium"
+                        style={savedIdx === idx
+                          ? { background: 'rgba(34,197,94,0.12)', borderColor: 'rgba(34,197,94,0.3)', color: '#4ade80' }
+                          : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.08)', color: '#94a3b8' }}
+                      >
+                        {savedIdx === idx ? '✓ Item Saved' : 'Update Item'}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -625,7 +665,18 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
 
       {/* Sell price */}
       <div>
-        <label className="label">Sell Price ($)</label>
+        <div className="flex items-center justify-between mb-1">
+          <label className="label mb-0">Sell Price ($)</label>
+          {suggestedSell > 0 && (
+            <button
+              type="button"
+              onClick={() => set('sell_price', suggestedSell.toFixed(2))}
+              className="text-[11px] text-green-400/70 hover:text-green-400 transition-colors"
+            >
+              Use suggested ${suggestedSell.toFixed(2)} →
+            </button>
+          )}
+        </div>
         <input className="input" type="number" step="0.01" value={form.sell_price}
           onChange={e => set('sell_price', e.target.value)} placeholder={`${suggestedSell.toFixed(2)} suggested`} />
         {form.sell_price && (
@@ -687,7 +738,19 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
       </div>
 
       <div className="flex gap-2 pt-1">
-        <button type="submit" className="btn-primary flex-1">{initial?.id ? 'Save Changes' : 'Create Order'}</button>
+        {form.id && (
+          <button
+            type="button"
+            onClick={handleUpdateAll}
+            className="flex-1 py-2 rounded-xl text-sm font-semibold border transition-colors"
+            style={savedAll
+              ? { background: 'rgba(34,197,94,0.15)', borderColor: 'rgba(34,197,94,0.4)', color: '#4ade80' }
+              : { background: 'rgba(255,255,255,0.05)', borderColor: 'rgba(255,255,255,0.1)', color: '#94a3b8' }}
+          >
+            {savedAll ? '✓ Updated' : 'Update All'}
+          </button>
+        )}
+        <button type="submit" className="btn-primary flex-1">{form.id ? 'Save & Close' : 'Create Order'}</button>
         <button type="button" onClick={onCancel} className="btn-ghost">Cancel</button>
       </div>
     </form>
@@ -887,6 +950,7 @@ export default function Orders({ clientFilter, onClearFilter }) {
             printTypes={printTypes}
             onSave={handleSave}
             onCancel={() => setModal(null)}
+            onRefresh={load}
           />
         </Modal>
       )}
