@@ -10,8 +10,7 @@
     "dist:mac": "vite build && electron-builder --mac",
     "dist:win": "vite build && electron-builder --win",
     "electron": "electron .",
-    "preview": "vite preview",
-    "postinstall": "electron-builder install-app-deps"
+    "preview": "vite preview"
   },
   "dependencies": {
     "better-sqlite3": "^9.4.3",
@@ -35,8 +34,7 @@
     "copyright": "Copyright © 2025",
     "files": [
       "dist/**/*",
-      "electron/**/*",
-      "node_modules/better-sqlite3/**/*"
+      "electron/**/*"
     ],
     "directories": {
       "output": "release"
@@ -49,24 +47,20 @@
       "category": "public.app-category.productivity",
       "target": [
         { "target": "dmg", "arch": ["x64", "arm64"] }
-      ],
-      "icon": "public/icon.icns"
+      ]
     },
     "dmg": {
       "title": "PrintFlow",
-      "background": null,
       "window": { "width": 540, "height": 380 }
     },
     "win": {
       "target": [
         { "target": "nsis", "arch": ["x64"] }
-      ],
-      "icon": "public/icon.ico"
+      ]
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "installerIcon": "public/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "PrintFlow"
