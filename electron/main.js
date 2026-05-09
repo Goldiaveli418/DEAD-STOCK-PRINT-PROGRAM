@@ -307,7 +307,7 @@ ipcMain.handle('orderItems:save', (_, { orderId, items }) => {
       shirt_color:               item.shirt_color || '',
       garment_cost_per_piece:    Number(item.garment_cost_per_piece) || 0,
       client_garment_per_piece:  Number(item.client_garment_per_piece) || 0,
-      labor_base:                Number(item.labor_base) || 7,
+      labor_base:                (item.labor_base == null ? 7 : Number(item.labor_base)),
       prints_on_garment:         Number(item.prints_on_garment) || 1,
       customer_supplied:         item.customer_supplied ? 1 : 0,
       asset_path:                item.asset_path || '',
@@ -676,14 +676,14 @@ function calcItemTotals(item) {
     for (const asset of assets) {
       const ink = asset.client_ink_costs || {}
       clientInkTotal += INVOICE_SIZES.reduce((s, k) => s + (Number(sizes[k]) || 0) * (Number(ink[k]) || 0), 0)
-      laborTotal     += qty * (Number(asset.labor_base) || 7)
+      laborTotal     += qty * ((asset.labor_base == null ? 7 : Number(asset.labor_base)))
     }
   } else {
     try {
       const ink = JSON.parse(item.client_ink_breakdown || '{}')
       clientInkTotal = INVOICE_SIZES.reduce((s, k) => s + (Number(sizes[k]) || 0) * (Number(ink[k]) || 0), 0)
     } catch (_) {}
-    const laborBase = Number(item.labor_base) || 7
+    const laborBase = (item.labor_base == null ? 7 : Number(item.labor_base))
     const prints    = Number(item.prints_on_garment) || 1
     laborTotal = qty * (laborBase + 3 * Math.max(0, prints - 1))
   }
@@ -732,8 +732,8 @@ function generateInvoiceHTML(order, items) {
         const locName   = (asset.name || (asset.file_path || '').split(/[\\/]/).pop().replace(/\.[^.]+$/, '') || 'Print').replace(/</g, '&lt;')
         const ink       = asset.client_ink_costs || {}
         const locInk    = INVOICE_SIZES.reduce((s, k) => s + (Number(sizesObj[k]) || 0) * (Number(ink[k]) || 0), 0)
-        const locLabor  = qty * (Number(asset.labor_base) || 7)
-        const locPerPc  = Number(asset.labor_base) || 7
+        const locLabor  = qty * ((asset.labor_base == null ? 7 : Number(asset.labor_base)))
+        const locPerPc  = (asset.labor_base == null ? 7 : Number(asset.labor_base))
         if (locInk > 0) {
           locationRows += `<tr><td>Ink — ${locName}</td><td class="r">per size</td><td class="r">$${locInk.toFixed(2)}</td></tr>`
         }
@@ -899,7 +899,7 @@ function generateQuoteText(order, items) {
         const locName  = asset.name || (asset.file_path || '').split(/[\\/]/).pop().replace(/\.[^.]+$/, '') || 'Print'
         const ink      = asset.client_ink_costs || {}
         const locInk   = INVOICE_SIZES.reduce((s, k) => s + (Number(sizesObj[k]) || 0) * (Number(ink[k]) || 0), 0)
-        const locPerPc = Number(asset.labor_base) || 7
+        const locPerPc = (asset.labor_base == null ? 7 : Number(asset.labor_base))
         const locLabor = qty * locPerPc
         const lines = []
         if (locInk > 0) lines.push(pad(`Ink (${locName}):`, `$${locInk.toFixed(2)}`))

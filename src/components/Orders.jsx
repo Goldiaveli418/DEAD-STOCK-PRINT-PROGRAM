@@ -50,7 +50,7 @@ function itemClientInk(item) {
 function itemLabor(item) {
   const qty = itemQty(item)
   return (item.assets || []).reduce((total, asset) =>
-    total + qty * (Number(asset.labor_base) || 7), 0)
+    total + qty * (asset.labor_base === '' || asset.labor_base == null ? 7 : Number(asset.labor_base)), 0)
 }
 
 function itemMyGarment(item) {
@@ -178,7 +178,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
             ink_costs:        parseInkCosts(i.ink_cost_breakdown),
             client_ink_costs: parseInkCosts(i.client_ink_breakdown),
             fill_my_ink: '', fill_client_ink: '',
-            labor_base:       String(i.labor_base || 7),
+            labor_base:       String(i.labor_base ?? 7),
             assets: (() => {
               try {
                 const a = JSON.parse(i.item_assets || '[]')
@@ -187,7 +187,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
                     ...asset,
                     ink_costs:        parseInkCosts(typeof asset.ink_costs === 'object' ? JSON.stringify(asset.ink_costs) : asset.ink_costs),
                     client_ink_costs: parseInkCosts(typeof asset.client_ink_costs === 'object' ? JSON.stringify(asset.client_ink_costs) : asset.client_ink_costs),
-                    labor_base: String(asset.labor_base || 7),
+                    labor_base: String(asset.labor_base ?? 7),
                   }))
                 }
                 if (i.asset_path) {
@@ -195,7 +195,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
                     file_path: i.asset_path, name: i.asset_name || '',
                     ink_costs:        parseInkCosts(i.ink_cost_breakdown),
                     client_ink_costs: parseInkCosts(i.client_ink_breakdown),
-                    labor_base: String(i.labor_base || 7),
+                    labor_base: String(i.labor_base ?? 7),
                   })]
                 }
                 return []
@@ -338,7 +338,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
         ...a,
         ink_costs:        a.ink_costs || {},
         client_ink_costs: a.client_ink_costs || {},
-        labor_base:       Number(a.labor_base) || 7,
+        labor_base:       a.labor_base === '' || a.labor_base == null ? 7 : Number(a.labor_base),
       }))),
       asset_path: (i.assets || [])[0]?.file_path || '',
       asset_name: (i.assets || [])[0]?.name || '',
