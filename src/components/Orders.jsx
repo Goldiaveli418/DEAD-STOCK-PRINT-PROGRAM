@@ -18,31 +18,35 @@ const BASE_LABOR = 7
 const EXTRA_LABOR = 3
 const SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL']
 
-function blankSizes() {
-  return Object.fromEntries(SIZES.map(s => [s, '']))
+function blankSizes()    { return Object.fromEntries(SIZES.map(s => [s, ''])) }
+function blankInkCosts() { return Object.fromEntries(SIZES.map(s => [s, ''])) }
+
+function parseJSON(raw) {
+  if (!raw) return null
+  try {
+    const p = JSON.parse(raw)
+    if (p && typeof p === 'object' && !Array.isArray(p)) return p
+  } catch (_) {}
+  return null
 }
 
-function parseSizes(raw) {
-  if (!raw) return blankSizes()
-  try {
-    const parsed = JSON.parse(raw)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return { ...blankSizes(), ...parsed }
-  } catch (_) {}
-  return blankSizes()
-}
+function parseSizes(raw)    { return { ...blankSizes(),    ...(parseJSON(raw) || {}) } }
+function parseInkCosts(raw) { return { ...blankInkCosts(), ...(parseJSON(raw) || {}) } }
 
 function itemQty(item) {
   return SIZES.reduce((sum, s) => sum + (Number(item.sizes?.[s]) || 0), 0)
 }
 
-function itemLabor(item) {
-  const qty = itemQty(item)
-  const prints = Number(item.prints_on_garment) || 1
-  return qty * (BASE_LABOR + EXTRA_LABOR * Math.max(0, prints - 1))
+function itemInk(item) {
+  return SIZES.reduce((sum, s) => {
+    return sum + (Number(item.sizes?.[s]) || 0) * (Number(item.ink_costs?.[s]) || 0)
+  }, 0)
 }
 
-function itemInk(item) {
-  return (Number(item.ink_cost) || 0) * itemQty(item)
+function itemLabor(item) {
+  const qty    = itemQty(item)
+  const prints = Number(item.prints_on_garment) || 1
+  return qty * (BASE_LABOR + EXTRA_LABOR * Math.max(0, prints - 1))
 }
 
 function itemGarment(item) {
@@ -56,10 +60,13 @@ function blankItem(printTypes) {
     print_type_id: printTypes[0]?.id || '',
     description: '',
     sizes: blankSizes(),
-    ink_cost: '',
+    ink_costs: blankInkCosts(),
+    fill_ink: '',
     garment_cost_per_piece: '',
     prints_on_garment: '1',
     customer_supplied: false,
+    asset_path: '',
+    asset_name: '',
   }
 }
 
@@ -104,7 +111,15 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
     if (initial?.id) {
       window.api.orders.get(initial.id).then(o => {
         if (o?.items?.length) {
-          setItems(o.items.map(i => ({ ...i, sizes: parseSizes(i.size_breakdown) })))
+          setItems(o.items.map(i => ({
+            ...i,
+            sizes:      parseSizes(i.size_breakdown),
+            ink_costs:  parseInkCosts(i.ink_cost_breakdown),
+            fill_ink:   '',
+            asset_path: i.asset_path || '',
+            asset_name: i.asset_name || '',
+            _asset_saved: !!(i.asset_path),
+          })))
         }
       })
     }
@@ -126,7 +141,25 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
     setItems(i => i.filter((_, ii) => ii !== idx))
   }
 
-  async function pickAssets() {
+  function fillInkCosts(idx, val) {
+    setItems(items => items.map((item, i) =>
+      i !== idx ? item
+        : { ...item, ink_costs: Object.fromEntries(SIZES.map(s => [s, val])) }
+    ))
+  }
+
+  async function pickItemAsset(idx) {
+    const paths = await window.api.openFile()
+    if (!paths.length) return
+    const p = paths[0]
+    const parts = p.split(/[\\/]/)
+    const name = parts[parts.length - 1].replace(/\.[^.]+$/, '')
+    setItems(items => items.map((item, i) =>
+      i !== idx ? item : { ...item, asset_path: p, asset_name: name, _asset_new: true }
+    ))
+  }
+
+  async function pickOrderAssets() {
     const paths = await window.api.openFile()
     if (!paths.length) return
     const next = paths.map(p => {
@@ -147,17 +180,18 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
     e.preventDefault()
     const serializedItems = items.map(i => ({
       ...i,
-      quantity: itemQty(i),
-      size_breakdown: JSON.stringify(i.sizes || {}),
+      quantity:           itemQty(i),
+      size_breakdown:     JSON.stringify(i.sizes || {}),
+      ink_cost_breakdown: JSON.stringify(i.ink_costs || {}),
     }))
     await onSave(
       {
         ...form,
-        is_rush: form.is_rush ? 1 : 0,
-        garment_qty: totalQty,
-        ink_cost: totalInk,
-        garment_cost: totalGarment,
-        labor_cost: totalLabor,
+        is_rush:           form.is_rush ? 1 : 0,
+        garment_qty:       totalQty,
+        ink_cost:          totalInk,
+        garment_cost:      totalGarment,
+        labor_cost:        totalLabor,
         customer_supplied: items.every(i => i.customer_supplied) ? 1 : 0,
       },
       serializedItems,
@@ -167,7 +201,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
-      {/* Header */}
+      {/* Order header */}
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="label">Client *</label>
@@ -216,9 +250,12 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
             const labor = itemLabor(item)
             const ink   = itemInk(item)
             const gmt   = itemGarment(item)
+            const qty   = itemQty(item)
             return (
-              <div key={idx} className="p-3 rounded-xl bg-[#181c2a] border border-white/5 space-y-2">
-                <div className="flex items-center justify-between mb-1">
+              <div key={idx} className="p-3 rounded-xl bg-[#181c2a] border border-white/5 space-y-2.5">
+
+                {/* Item header row */}
+                <div className="flex items-center justify-between">
                   <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Item {idx + 1}</span>
                   <div className="flex items-center gap-3">
                     <Toggle small on={!!item.customer_supplied} onChange={v => updateItem(idx, 'customer_supplied', v)} label="Customer Blanks" />
@@ -228,7 +265,28 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
                   </div>
                 </div>
 
-                {/* Shirt + print */}
+                {/* Art attachment */}
+                {item.asset_path ? (
+                  <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-black/30 border border-green-500/20">
+                    <span className="text-xs">🖼</span>
+                    <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">{item.asset_name || item.asset_path.split(/[\\/]/).pop()}</span>
+                    <button
+                      type="button"
+                      onClick={() => setItems(its => its.map((it, i) => i !== idx ? it : { ...it, asset_path: '', asset_name: '', _asset_new: false }))}
+                      className="text-slate-600 hover:text-red-400 transition-colors text-xs shrink-0"
+                    >✕</button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => pickItemAsset(idx)}
+                    className="w-full text-xs text-slate-500 hover:text-green-400 py-1.5 rounded-lg border border-dashed border-white/10 hover:border-green-500/30 transition-colors"
+                  >
+                    + Attach Art File
+                  </button>
+                )}
+
+                {/* Shirt brand / color / print type / description */}
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="label">Shirt Brand</label>
@@ -254,58 +312,95 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
                   </div>
                 </div>
 
-                {/* Size quantities */}
+                {/* Size / ink table */}
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="label mb-0">Qty by Size</label>
-                    <span className="text-[10px] text-slate-500 font-mono">Total: <span className="text-slate-300">{itemQty(item)}</span> pcs</span>
-                  </div>
-                  <div className="grid grid-cols-7 gap-1">
-                    {SIZES.map(size => (
-                      <div key={size} className="text-center">
-                        <div className="text-[9px] text-slate-500 mb-0.5 font-medium">{size}</div>
-                        <input
-                          className="input text-xs py-1 text-center px-0.5 w-full"
-                          type="number" min="0"
-                          value={item.sizes?.[size] ?? ''}
-                          onChange={e => updateItem(idx, 'sizes', { ...item.sizes, [size]: e.target.value })}
-                          placeholder="0"
-                        />
-                      </div>
+                  {/* Column headers */}
+                  <div className="grid gap-1 mb-0.5" style={{ gridTemplateColumns: '52px repeat(7, 1fr)' }}>
+                    <div />
+                    {SIZES.map(s => (
+                      <div key={s} className="text-[9px] text-center text-slate-500 font-medium">{s}</div>
                     ))}
+                  </div>
+
+                  {/* Qty row */}
+                  <div className="grid gap-1 items-center mb-1" style={{ gridTemplateColumns: '52px repeat(7, 1fr)' }}>
+                    <div className="text-[10px] text-slate-400">Qty</div>
+                    {SIZES.map(s => (
+                      <input
+                        key={s}
+                        className="input text-xs py-1 text-center px-0.5"
+                        type="number" min="0"
+                        value={item.sizes?.[s] ?? ''}
+                        onChange={e => updateItem(idx, 'sizes', { ...item.sizes, [s]: e.target.value })}
+                        placeholder="0"
+                      />
+                    ))}
+                  </div>
+
+                  {/* Ink $/pc row */}
+                  <div className="grid gap-1 items-center" style={{ gridTemplateColumns: '52px repeat(7, 1fr)' }}>
+                    <div className="text-[10px] text-slate-400 leading-tight">Ink<br/>$/pc</div>
+                    {SIZES.map(s => (
+                      <input
+                        key={s}
+                        className="input text-xs py-1 text-center px-0.5"
+                        type="number" step="0.01" min="0"
+                        value={item.ink_costs?.[s] ?? ''}
+                        onChange={e => updateItem(idx, 'ink_costs', { ...item.ink_costs, [s]: e.target.value })}
+                        placeholder="0"
+                      />
+                    ))}
+                  </div>
+
+                  {/* Fill ink + totals */}
+                  <div className="flex items-center justify-between mt-1.5 gap-2">
+                    <span className="text-[10px] text-slate-500 font-mono">
+                      {qty} pcs · ink <span className="text-slate-400">${ink.toFixed(2)}</span>
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <input
+                        className="input text-xs py-0.5 w-20 text-center"
+                        type="number" step="0.01" min="0"
+                        value={item.fill_ink ?? ''}
+                        onChange={e => updateItem(idx, 'fill_ink', e.target.value)}
+                        placeholder="$/pc"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => fillInkCosts(idx, item.fill_ink)}
+                        className="text-[11px] px-2 py-0.5 rounded bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/20 transition-colors whitespace-nowrap"
+                      >
+                        Fill all →
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                {/* Costs */}
-                <div className="grid grid-cols-3 gap-2">
+                {/* Blank cost + # prints */}
+                <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="label"># Prints</label>
+                    <label className="label"># Prints on Garment</label>
                     <input className="input text-xs py-1.5" type="number" min="1" max="10" value={item.prints_on_garment} onChange={e => updateItem(idx, 'prints_on_garment', e.target.value)} placeholder="1" />
                   </div>
                   <div>
-                    <label className="label">Ink $/pc</label>
-                    <input className="input text-xs py-1.5" type="number" step="0.01" value={item.ink_cost} onChange={e => updateItem(idx, 'ink_cost', e.target.value)} placeholder="0.00" />
-                  </div>
-                  <div>
-                    <label className="label">{item.customer_supplied ? 'Blank $/pc' : 'Blank $/pc'}</label>
+                    <label className="label">Blank $/pc</label>
                     <input
                       className={`input text-xs py-1.5 ${item.customer_supplied ? 'opacity-30 pointer-events-none' : ''}`}
                       type="number" step="0.01"
                       value={item.customer_supplied ? '' : item.garment_cost_per_piece}
                       onChange={e => updateItem(idx, 'garment_cost_per_piece', e.target.value)}
-                      placeholder={item.customer_supplied ? 'supplied' : '0.00'}
+                      placeholder={item.customer_supplied ? 'customer supplied' : '0.00'}
                       disabled={!!item.customer_supplied}
                     />
                   </div>
                 </div>
 
-                {/* Item totals */}
-                {(item.quantity || item.ink_cost) && (
-                  <div className="flex gap-3 pt-1 border-t border-white/5 text-[10px] font-mono text-slate-500">
+                {/* Item cost summary */}
+                {(qty > 0 || ink > 0) && (
+                  <div className="flex gap-3 pt-1.5 border-t border-white/5 text-[10px] font-mono text-slate-500">
                     <span>Garment: <span className="text-slate-400">${gmt.toFixed(2)}</span></span>
-                    <span>Ink: <span className="text-slate-400">${ink.toFixed(2)}</span></span>
                     <span>Labor: <span className="text-slate-400">${labor.toFixed(2)}</span></span>
-                    <span className="ml-auto">Item total: <span className="text-green-400/80">${(gmt + ink + labor).toFixed(2)}</span></span>
+                    <span className="ml-auto font-semibold">Item total: <span className="text-green-400/80">${(gmt + ink + labor).toFixed(2)}</span></span>
                   </div>
                 )}
               </div>
@@ -314,26 +409,29 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
         </div>
       </div>
 
-      {/* Graphic assets */}
+      {/* Order-level graphic assets */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <label className="label mb-0">Graphic Assets</label>
-          <button type="button" onClick={pickAssets} className="text-xs text-green-400 hover:text-green-300 transition-colors">+ Attach Files</button>
+          <label className="label mb-0">Additional Assets</label>
+          <button type="button" onClick={pickOrderAssets} className="text-xs text-green-400 hover:text-green-300 transition-colors">+ Attach Files</button>
         </div>
         {pendingAssets.length === 0 ? (
-          <div className="text-xs text-slate-500 py-2 text-center border border-dashed border-white/10 rounded-lg cursor-pointer hover:border-green-500/30 transition-colors" onClick={pickAssets}>
-            Attach design files — auto-saved to client assets
+          <div
+            className="text-xs text-slate-500 py-2 text-center border border-dashed border-white/10 rounded-lg cursor-pointer hover:border-green-500/30 transition-colors"
+            onClick={pickOrderAssets}
+          >
+            Attach extra files — auto-saved to client assets
           </div>
         ) : (
           <div className="space-y-1.5">
-            {pendingAssets.map((a, idx) => (
-              <div key={idx} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#181c2a] border border-white/5">
+            {pendingAssets.map((a, i) => (
+              <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#181c2a] border border-white/5">
                 <span className="text-sm">🖼</span>
                 <div className="flex-1 min-w-0">
                   <div className="text-xs text-slate-200 truncate">{a.name}</div>
                   <div className="text-[10px] text-slate-500 font-mono truncate">{a.file_path}</div>
                 </div>
-                <button type="button" onClick={() => setPendingAssets(p => p.filter((_, i) => i !== idx))} className="text-slate-600 hover:text-red-400 transition-colors text-xs">✕</button>
+                <button type="button" onClick={() => setPendingAssets(p => p.filter((_, j) => j !== i))} className="text-slate-600 hover:text-red-400 transition-colors text-xs">✕</button>
               </div>
             ))}
             <p className="text-[10px] text-green-500/60 px-1">Saved to client asset library on order save.</p>
@@ -388,13 +486,13 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
 }
 
 export default function Orders({ clientFilter, onClearFilter }) {
-  const [orders, setOrders] = useState([])
-  const [clients, setClients] = useState([])
+  const [orders, setOrders]       = useState([])
+  const [clients, setClients]     = useState([])
   const [printTypes, setPrintTypes] = useState([])
-  const [modal, setModal] = useState(null)
-  const [deleting, setDeleting] = useState(null)
+  const [modal, setModal]         = useState(null)
+  const [deleting, setDeleting]   = useState(null)
   const [statusFilter, setStatusFilter] = useState('all')
-  const [search, setSearch] = useState('')
+  const [search, setSearch]       = useState('')
 
   const load = useCallback(() => {
     window.api.orders.list(clientFilter || undefined).then(setOrders)
@@ -413,17 +511,31 @@ export default function Orders({ clientFilter, onClearFilter }) {
     } else {
       order = await window.api.orders.create(form)
     }
+
     if (items) await window.api.orderItems.save({ orderId: order.id, items })
-    if (pendingAssets?.length) {
-      for (const a of pendingAssets) {
+
+    // Order-level extra assets
+    for (const a of (pendingAssets || [])) {
+      await window.api.assets.create({
+        client_id: order.client_id,
+        name: a.name,
+        file_path: a.file_path,
+        notes: `From order: ${order.title}`,
+      })
+    }
+
+    // Per-item art files (only newly attached)
+    for (const item of (items || [])) {
+      if (item.asset_path && item._asset_new) {
         await window.api.assets.create({
           client_id: order.client_id,
-          name: a.name,
-          file_path: a.file_path,
+          name: item.asset_name || item.asset_path.split(/[\\/]/).pop(),
+          file_path: item.asset_path,
           notes: `From order: ${order.title}`,
         })
       }
     }
+
     setModal(null)
     load()
   }

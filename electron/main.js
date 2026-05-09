@@ -219,17 +219,19 @@ ipcMain.handle('orderItems:save', (_, { orderId, items }) => {
   for (const item of items) {
     store.orderItems.push({
       id: id++,
-      order_id:              orderId,
-      print_type_id:         item.print_type_id ? Number(item.print_type_id) : null,
-      description:           item.description || '',
-      quantity:              Number(item.quantity) || 1,
-      size_breakdown:        item.size_breakdown || '',
-      shirt_brand:           item.shirt_brand || '',
-      shirt_color:           item.shirt_color || '',
+      order_id:               orderId,
+      print_type_id:          item.print_type_id ? Number(item.print_type_id) : null,
+      description:            item.description || '',
+      quantity:               Number(item.quantity) || 1,
+      size_breakdown:         item.size_breakdown || '',
+      ink_cost_breakdown:     item.ink_cost_breakdown || '',
+      shirt_brand:            item.shirt_brand || '',
+      shirt_color:            item.shirt_color || '',
       garment_cost_per_piece: Number(item.garment_cost_per_piece) || 0,
-      ink_cost:              Number(item.ink_cost) || 0,
-      prints_on_garment:     Number(item.prints_on_garment) || 1,
-      customer_supplied:     item.customer_supplied ? 1 : 0,
+      prints_on_garment:      Number(item.prints_on_garment) || 1,
+      customer_supplied:      item.customer_supplied ? 1 : 0,
+      asset_path:             item.asset_path || '',
+      asset_name:             item.asset_name || '',
     })
   }
   save()
