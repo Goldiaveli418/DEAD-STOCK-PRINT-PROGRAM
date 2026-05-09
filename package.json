@@ -6,9 +6,6 @@
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "vite build",
-    "dist": "vite build && electron-builder",
-    "dist:mac": "vite build && electron-builder --mac",
-    "dist:win": "vite build && electron-builder --win",
     "electron": "electron .",
     "preview": "vite preview"
   },
@@ -30,28 +27,22 @@
   "build": {
     "appId": "com.printflow.app",
     "productName": "PrintFlow",
-    "copyright": "Copyright © 2025",
-    "files": [
-      "dist/**/*",
-      "electron/**/*"
-    ],
-    "directories": {
-      "output": "release"
-    },
+    "icon": "logo.png",
+    "directories": { "output": "dist-app" },
+    "files": ["dist/**/*", "electron/**/*", "logo.png", "node_modules/**/*"],
     "mac": {
       "category": "public.app-category.productivity",
-      "target": [
-        { "target": "dmg", "arch": ["x64", "arm64"] }
-      ]
+      "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
     },
     "dmg": {
       "title": "PrintFlow",
       "window": { "width": 540, "height": 380 }
     },
     "win": {
-      "target": [
-        { "target": "nsis", "arch": ["x64"] }
-      ]
+      "target": "nsis",
+      "icon": "logo.ico"
     },
     "nsis": {
       "oneClick": false,

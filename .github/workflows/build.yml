@@ -2,98 +2,74 @@ name: Build & Release
 
 on:
   push:
-    branches: [main]
-    tags: ['v*']
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-mac:
-    name: Build macOS DMG
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '20'
 
       - name: Install dependencies
         run: npm install
 
-      - name: Build Vite + package DMG
-        run: npm run dist:mac
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Generate logo.png icon
+        run: magick -size 512x512 xc:'#22c55e' -fill white -font Helvetica -pointsize 160 -gravity center -annotate 0 'PF' logo.png
 
-      - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
+      - name: Build React app (Vite)
+        run: npx vite build
+
+      - name: Package DMG (electron-builder)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          USE_HARD_LINKS: false
+        run: npx electron-builder --mac dmg --publish never
+
+      - name: Upload DMG to Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: PrintFlow-mac
-          path: release/*.dmg
-          retention-days: 30
+          files: dist-app/*.dmg
+          draft: false
+          prerelease: false
+          generate_release_notes: true
 
   build-win:
-    name: Build Windows EXE
-    runs-on: windows-2022
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '20'
 
       - name: Install dependencies
         run: npm install
 
-      - name: Build Vite + package EXE
-        run: npm run dist:win
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate logo.png and logo.ico icons
+        shell: bash
+        run: |
+          magick -size 512x512 xc:'#22c55e' -fill white -font Arial -pointsize 160 -gravity center -annotate 0 'PF' logo.png
+          magick logo.png -resize 256x256 logo.ico
 
-      - name: Upload EXE artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: PrintFlow-windows
-          path: release/*.exe
-          retention-days: 30
+      - name: Build React app (Vite)
+        run: npx vite build
 
-  release:
-    name: Create GitHub Release
-    needs: [build-mac, build-win]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
-    steps:
-      - name: Download Mac artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: PrintFlow-mac
-          path: artifacts/mac
+      - name: Package EXE (electron-builder)
+        run: npx electron-builder --win nsis --publish never
 
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: PrintFlow-windows
-          path: artifacts/win
-
-      - name: Create Release
+      - name: Upload EXE to Release
         uses: softprops/action-gh-release@v2
         with:
-          name: PrintFlow ${{ github.ref_name }}
-          body: |
-            ## PrintFlow ${{ github.ref_name }}
-
-            DTG printing workflow manager — clients, orders, graphic assets, and ink pricing.
-
-            ### Downloads
-            - **Mac** — download the `.dmg`, open it, drag PrintFlow to Applications
-            - **Windows** — download the `.exe` installer, run it, follow the prompts
-          files: |
-            artifacts/mac/*.dmg
-            artifacts/win/*.exe
+          files: dist-app/*.exe
           draft: false
           prerelease: false
+          generate_release_notes: true
