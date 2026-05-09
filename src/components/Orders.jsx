@@ -703,6 +703,7 @@ export default function Orders({ clientFilter, onClearFilter }) {
   const [statusFilter, setStatusFilter] = useState('all')
   const [search, setSearch]         = useState('')
   const [pdfing, setPdfing]         = useState(null)
+  const [quoteText, setQuoteText]   = useState(null)
 
   const load = useCallback(() => {
     window.api.orders.list(clientFilter || undefined).then(setOrders)
@@ -775,6 +776,13 @@ export default function Orders({ clientFilter, onClearFilter }) {
     } finally {
       setPdfing(null)
     }
+  }
+
+  async function handleText(orderId) {
+    const order = await window.api.orders.get(orderId)
+    if (!order) return
+    const text = await window.api.invoice.text({ order, items: order.items || [] })
+    setQuoteText({ text, title: order.title })
   }
 
   const clientName = clientFilter ? clients.find(c => c.id === clientFilter)?.name : null
@@ -855,6 +863,10 @@ export default function Orders({ clientFilter, onClearFilter }) {
                           className="text-xs px-2 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors border border-blue-500/10 disabled:opacity-40">
                           {pdfing === o.id ? '…' : 'PDF'}
                         </button>
+                        <button onClick={() => handleText(o.id)}
+                          className="text-xs px-2 py-0.5 rounded bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 transition-colors border border-purple-500/10">
+                          Text
+                        </button>
                         <button onClick={() => setModal(o)} className="text-xs px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 transition-colors border border-white/5">Edit</button>
                         <button onClick={() => setDeleting(o)} className="text-xs px-2 py-0.5 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors border border-red-500/10">Del</button>
                       </div>
@@ -889,6 +901,31 @@ export default function Orders({ clientFilter, onClearFilter }) {
               <button onClick={() => handleDelete(deleting.id)} className="btn-danger flex-1">Delete</button>
               <button onClick={() => setDeleting(null)} className="btn-ghost">Cancel</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {quoteText && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="card-glow w-full max-w-2xl mx-4 p-6 flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between mb-4 shrink-0">
+              <div>
+                <h2 className="text-base font-semibold text-white">Quote Text</h2>
+                <p className="text-xs text-slate-500 mt-0.5">{quoteText.title}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => navigator.clipboard.writeText(quoteText.text)}
+                  className="text-xs px-3 py-1.5 rounded bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/20 transition-colors"
+                >
+                  Copy to Clipboard
+                </button>
+                <button onClick={() => setQuoteText(null)} className="text-slate-500 hover:text-slate-200 transition-colors text-lg leading-none">✕</button>
+              </div>
+            </div>
+            <pre className="flex-1 overflow-y-auto text-xs font-mono text-slate-300 bg-black/40 rounded-xl p-4 leading-relaxed whitespace-pre select-all border border-white/5">
+{quoteText.text}
+            </pre>
           </div>
         </div>
       )}

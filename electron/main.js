@@ -362,117 +362,243 @@ ipcMain.handle('stats:get', () => {
   }
 })
 
-// ── Invoice PDF ───────────────────────────────────────────────────────────────
+// ── Invoice helpers ───────────────────────────────────────────────────────────
+const INVOICE_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL']
+
+function calcItemTotals(item) {
+  const qty = Number(item.quantity) || 0
+  let clientInkTotal = 0
+  try {
+    const ink   = JSON.parse(item.client_ink_breakdown || '{}')
+    const sizes = JSON.parse(item.size_breakdown || '{}')
+    clientInkTotal = INVOICE_SIZES.reduce((s, k) => s + (Number(sizes[k]) || 0) * (Number(ink[k]) || 0), 0)
+  } catch (_) {}
+  const laborBase     = Number(item.labor_base) || 7
+  const prints        = Number(item.prints_on_garment) || 1
+  const laborPerPc    = laborBase + 3 * Math.max(0, prints - 1)
+  const laborTotal    = qty * laborPerPc
+  const garmentTotal  = item.customer_supplied ? 0 : (Number(item.client_garment_per_piece) || 0) * qty
+  const itemTotal     = garmentTotal + clientInkTotal + laborTotal
+  return { qty, clientInkTotal, laborTotal, garmentTotal, itemTotal, laborPerPc }
+}
+
+// ── PDF ───────────────────────────────────────────────────────────────────────
 function generateInvoiceHTML(order, items) {
-  const SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL']
   const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
 
-  const itemRows = items.map((item, i) => {
-    let sizesHtml = '—'
-    try {
-      const s = JSON.parse(item.size_breakdown || '{}')
-      const parts = SIZES.filter(k => Number(s[k]) > 0).map(k => `<span>${k}:&nbsp;<b>${s[k]}</b></span>`).join(' ')
-      if (parts) sizesHtml = parts
-    } catch (_) {}
+  let runningTotal = 0
 
-    // Client-facing price: sum of client ink + client garment per item
-    let clientCharge = 0
-    const qty = Number(item.quantity) || 0
+  const itemCards = items.map((item, i) => {
+    const { qty, clientInkTotal, laborTotal, garmentTotal, itemTotal, laborPerPc } = calcItemTotals(item)
+    runningTotal += itemTotal
+
+    // Size grid
+    let sizeRows = ''
     try {
-      const clientInk = JSON.parse(item.client_ink_breakdown || '{}')
       const sizes = JSON.parse(item.size_breakdown || '{}')
-      clientCharge += SIZES.reduce((s, k) => s + (Number(sizes[k]) || 0) * (Number(clientInk[k]) || 0), 0)
+      const active = INVOICE_SIZES.filter(k => Number(sizes[k]) > 0)
+      if (active.length) {
+        sizeRows = `<table class="sz-tbl">
+          <tr>${active.map(k => `<th>${k}</th>`).join('')}<th>Total</th></tr>
+          <tr>${active.map(k => `<td>${sizes[k]}</td>`).join('')}<td><b>${qty}</b></td></tr>
+        </table>`
+      }
     } catch (_) {}
-    clientCharge += (Number(item.client_garment_per_piece) || 0) * qty
 
-    const garment = [item.shirt_brand, item.shirt_color ? `(${item.shirt_color})` : ''].filter(Boolean).join(' ')
-    const print   = [item.description, item.print_type_name].filter(Boolean).join(' — ')
-    const priceCell = clientCharge > 0 ? `$${clientCharge.toFixed(2)}` : '—'
+    const garmentLabel = [item.shirt_brand, item.shirt_color].filter(Boolean).join(' · ')
+    const printLabel   = [item.description, item.print_type_name].filter(Boolean).join(' — ')
+    const prints       = Number(item.prints_on_garment) || 1
+    const laborDesc    = prints > 1 ? `$${laborPerPc.toFixed(2)}/pc (${prints} print locations)` : `$${laborPerPc.toFixed(2)}/pc`
 
-    return `<tr class="${i % 2 === 1 ? 'alt' : ''}">
-      <td class="c">${i + 1}</td>
-      <td>${garment || '—'}</td>
-      <td>${print || '—'}</td>
-      <td class="sz">${sizesHtml}</td>
-      <td class="c">${item.quantity}</td>
-      <td class="c">${priceCell}</td>
-    </tr>`
+    const garmentRow = !item.customer_supplied && garmentTotal > 0
+      ? `<tr><td>Garment</td><td class="r">$${Number(item.client_garment_per_piece || 0).toFixed(2)}/pc × ${qty}</td><td class="r">$${garmentTotal.toFixed(2)}</td></tr>`
+      : item.customer_supplied ? `<tr><td>Garment</td><td class="r" colspan="2" style="color:#888">Customer supplied</td></tr>` : ''
+
+    const inkRow = clientInkTotal > 0
+      ? `<tr><td>Ink</td><td class="r">see size pricing</td><td class="r">$${clientInkTotal.toFixed(2)}</td></tr>`
+      : ''
+
+    return `<div class="item-card">
+      <div class="item-hdr">
+        <div class="item-num">${String(i + 1).padStart(2, '0')}</div>
+        <div class="item-info">
+          <div class="item-garment">${garmentLabel || 'Garment'}</div>
+          ${printLabel ? `<div class="item-print">${printLabel}</div>` : ''}
+        </div>
+        <div class="item-ttl">$${itemTotal.toFixed(2)}</div>
+      </div>
+
+      ${sizeRows ? `<div class="sz-wrap">${sizeRows}</div>` : ''}
+
+      <table class="cost-tbl">
+        <thead><tr><th>Description</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead>
+        <tbody>
+          ${garmentRow}
+          ${inkRow}
+          <tr><td>Print Labor</td><td class="r">${laborDesc}</td><td class="r">$${laborTotal.toFixed(2)}</td></tr>
+        </tbody>
+        <tfoot>
+          <tr class="item-sub"><td colspan="2"><b>Item Subtotal</b></td><td class="r"><b>$${itemTotal.toFixed(2)}</b></td></tr>
+        </tfoot>
+      </table>
+    </div>`
   }).join('')
 
-  const priceRow = order.sell_price > 0 ? `
-    <tr class="price-row">
-      <td colspan="5" style="text-align:right;padding-right:12px"><b>Total</b></td>
-      <td class="c"><b>$${Number(order.sell_price).toFixed(2)}</b></td>
-    </tr>` : ''
+  const grandTotal = order.sell_price > 0 ? Number(order.sell_price) : runningTotal
 
-  const notesBlock = order.notes ? `
-    <div class="section">
-      <div class="label">Notes</div>
-      <div class="notes-box">${order.notes.replace(/</g, '&lt;')}</div>
-    </div>` : ''
+  const notesBlock = order.notes
+    ? `<div class="notes-box"><b>Notes:</b> ${order.notes.replace(/</g, '&lt;')}</div>` : ''
 
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#1a1a1a;padding:48px;background:#fff}
-.hdr{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:18px;border-bottom:2px solid #22c55e;margin-bottom:28px}
-.brand{font-size:20px;font-weight:700;letter-spacing:-0.5px}.brand em{color:#22c55e;font-style:normal}
-.meta{text-align:right;line-height:1.75;color:#555}.meta strong{color:#111}
-.rush{color:#ef4444;font-weight:700}
-.order-info{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;background:#f7f7f7;border-radius:6px;padding:14px 18px;margin-bottom:24px}
-.oi-block label{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:#999;margin-bottom:2px}
-.oi-block span{font-size:13px;font-weight:600;color:#111}
-.label{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:#999;margin-bottom:6px}
-.section{margin-bottom:22px}
-table{width:100%;border-collapse:collapse}
-th{background:#111;color:#fff;font-size:10px;text-transform:uppercase;letter-spacing:.7px;padding:8px 10px;text-align:left}
-th.c,td.c{text-align:center}
-td{padding:8px 10px;border-bottom:1px solid #eee;vertical-align:top;line-height:1.45}
-tr.alt td{background:#fafafa}
-.sz span{white-space:nowrap;margin-right:5px;font-size:11px;color:#555}
-tr.price-row td{border-top:2px solid #22c55e;border-bottom:none;padding-top:10px}
-.notes-box{background:#f7f7f7;border-left:3px solid #22c55e;padding:10px 14px;border-radius:0 4px 4px 0;line-height:1.6;color:#444}
-.footer{margin-top:36px;padding-top:14px;border-top:1px solid #eee;font-size:10px;color:#bbb;text-align:center}
+body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#1a1a1a;padding:40px 48px;background:#fff;max-width:860px;margin:0 auto}
+
+/* Header */
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:16px;border-bottom:3px solid #111;margin-bottom:24px}
+.brand-name{font-size:24px;font-weight:800;letter-spacing:-1px;color:#111}
+.brand-name em{color:#22c55e;font-style:normal}
+.brand-sub{font-size:10px;color:#999;text-transform:uppercase;letter-spacing:1px;margin-top:2px}
+.meta{text-align:right;line-height:1.8;color:#555;font-size:12px}
+.meta strong{color:#111;font-size:14px}
+.rush{display:inline-block;background:#fee2e2;color:#dc2626;font-weight:700;padding:1px 7px;border-radius:4px;font-size:11px}
+
+/* Order info bar */
+.info-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;margin-bottom:28px}
+.info-cell{padding:10px 14px;border-right:1px solid #e5e7eb}
+.info-cell:last-child{border-right:none}
+.info-cell label{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:#9ca3af;margin-bottom:3px}
+.info-cell span{font-size:13px;font-weight:700;color:#111}
+
+/* Item cards */
+.item-card{border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:16px}
+.item-hdr{display:flex;align-items:center;gap:12px;background:#111;color:#fff;padding:10px 14px}
+.item-num{font-size:11px;font-weight:700;background:#22c55e;color:#000;border-radius:4px;padding:2px 7px;letter-spacing:.5px;white-space:nowrap}
+.item-info{flex:1;min-width:0}
+.item-garment{font-weight:600;font-size:13px}
+.item-print{font-size:11px;color:#9ca3af;margin-top:1px}
+.item-ttl{font-size:15px;font-weight:800;color:#22c55e;white-space:nowrap}
+
+/* Size grid */
+.sz-wrap{padding:10px 14px;background:#f9fafb;border-bottom:1px solid #e5e7eb}
+.sz-tbl{width:auto;border-collapse:collapse}
+.sz-tbl th{background:none;color:#6b7280;font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:2px 10px 2px 0;text-align:center;border-bottom:1px solid #e5e7eb}
+.sz-tbl td{font-size:13px;font-weight:600;color:#111;padding:3px 10px 0 0;text-align:center;border:none}
+
+/* Cost table */
+.cost-tbl{width:100%;border-collapse:collapse}
+.cost-tbl thead th{background:#f3f4f6;color:#6b7280;font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:7px 14px;border-bottom:1px solid #e5e7eb}
+.cost-tbl tbody td{padding:8px 14px;border-bottom:1px solid #f3f4f6;color:#374151;font-size:12px}
+.cost-tbl tfoot td{padding:9px 14px;background:#f9fafb;font-size:12px}
+.cost-tbl .r{text-align:right}
+.item-sub td{border-top:2px solid #e5e7eb!important}
+
+/* Grand total */
+.grand-total{display:flex;justify-content:flex-end;margin-bottom:20px}
+.grand-box{border:2px solid #111;border-radius:8px;padding:14px 24px;text-align:right;min-width:220px}
+.grand-label{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:#6b7280;margin-bottom:4px}
+.grand-amount{font-size:26px;font-weight:800;color:#111}
+
+.notes-box{background:#f9fafb;border-left:4px solid #22c55e;padding:10px 14px;border-radius:0 6px 6px 0;font-size:12px;color:#374151;line-height:1.6;margin-bottom:20px}
+.footer{padding-top:14px;border-top:1px solid #e5e7eb;font-size:10px;color:#9ca3af;text-align:center}
+@media print{body{padding:20px}}
 </style></head><body>
 
 <div class="hdr">
   <div>
-    <div class="brand">Dead Stock<em>.</em></div>
-    <div style="font-size:11px;color:#888;margin-top:3px">DTG Print Services</div>
+    <div class="brand-name">Dead Stock<em>.</em></div>
+    <div class="brand-sub">DTG Print Services</div>
   </div>
   <div class="meta">
     <div><strong>${order.client_name}</strong></div>
     <div>Date: ${date}</div>
     ${order.due_date ? `<div>Due: ${order.due_date}</div>` : ''}
-    ${order.is_rush === 1 ? '<div class="rush">⚡ Rush Order</div>' : ''}
+    ${order.is_rush === 1 ? '<div><span class="rush">⚡ RUSH</span></div>' : ''}
   </div>
 </div>
 
-<div class="order-info">
-  <div class="oi-block"><label>Order</label><span>${order.title}</span></div>
-  <div class="oi-block"><label>Total Garments</label><span>${order.garment_qty || 0} pcs</span></div>
-  <div class="oi-block"><label>Status</label><span style="text-transform:capitalize">${order.status || 'New'}</span></div>
+<div class="info-bar">
+  <div class="info-cell"><label>Order</label><span>${order.title}</span></div>
+  <div class="info-cell"><label>Total Garments</label><span>${order.garment_qty || 0} pcs</span></div>
+  <div class="info-cell"><label>Items</label><span>${items.length}</span></div>
+  <div class="info-cell"><label>Status</label><span style="text-transform:capitalize">${order.status || 'New'}</span></div>
 </div>
 
-<div class="section">
-  <div class="label">Line Items</div>
-  <table>
-    <thead><tr>
-      <th class="c" style="width:32px">#</th>
-      <th style="width:20%">Garment</th>
-      <th>Print</th>
-      <th style="width:28%">Sizes</th>
-      <th class="c" style="width:44px">Qty</th>
-      <th class="c" style="width:60px">Price</th>
-    </tr></thead>
-    <tbody>${itemRows}${priceRow}</tbody>
-  </table>
-</div>
+${itemCards}
 
 ${notesBlock}
 
-<div class="footer">Generated ${date} · Quote valid for 30 days · Thank you for your business</div>
+<div class="grand-total">
+  <div class="grand-box">
+    <div class="grand-label">Total</div>
+    <div class="grand-amount">$${grandTotal.toFixed(2)}</div>
+  </div>
+</div>
+
+<div class="footer">Quote generated ${date} · Valid for 30 days · Thank you for your business</div>
 </body></html>`
+}
+
+// ── Plain text quote ──────────────────────────────────────────────────────────
+function generateQuoteText(order, items) {
+  const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+  const line  = (char, len = 48) => char.repeat(len)
+
+  let runningTotal = 0
+  const blocks = items.map((item, i) => {
+    const { qty, clientInkTotal, laborTotal, garmentTotal, itemTotal, laborPerPc } = calcItemTotals(item)
+    runningTotal += itemTotal
+
+    const garmentLabel = [item.shirt_brand, item.shirt_color].filter(Boolean).join(' · ')
+    const printLabel   = [item.description, item.print_type_name].filter(Boolean).join(' — ')
+    const prints       = Number(item.prints_on_garment) || 1
+
+    let sizeLine = ''
+    try {
+      const sizes = JSON.parse(item.size_breakdown || '{}')
+      const parts = INVOICE_SIZES.filter(k => Number(sizes[k]) > 0).map(k => `${k}:${sizes[k]}`).join('  ')
+      if (parts) sizeLine = `Sizes:     ${parts}  (${qty} pcs total)\n`
+    } catch (_) {}
+
+    const pad = (label, val) => `  ${label.padEnd(14)}${val}`
+
+    const rows = [
+      !item.customer_supplied && garmentTotal > 0
+        ? pad('Garment:', `$${Number(item.client_garment_per_piece || 0).toFixed(2)}/pc × ${qty} = $${garmentTotal.toFixed(2)}`)
+        : item.customer_supplied ? pad('Garment:', 'Customer supplied') : null,
+      clientInkTotal > 0 ? pad('Ink:', `$${clientInkTotal.toFixed(2)}`) : null,
+      pad('Labor:', `$${laborPerPc.toFixed(2)}/pc × ${qty}${prints > 1 ? ` (${prints} locations)` : ''} = $${laborTotal.toFixed(2)}`),
+    ].filter(Boolean).join('\n')
+
+    return [
+      `ITEM ${i + 1}${garmentLabel ? ' — ' + garmentLabel : ''}`,
+      printLabel,
+      sizeLine.trimEnd(),
+      rows,
+      `  ${line('-', 44)}`,
+      `  ITEM TOTAL       $${itemTotal.toFixed(2)}`,
+    ].filter(Boolean).join('\n')
+  })
+
+  const grandTotal = order.sell_price > 0 ? Number(order.sell_price) : runningTotal
+
+  return [
+    `QUOTE — ${order.title.toUpperCase()}`,
+    line('='),
+    `Client:    ${order.client_name}`,
+    `Date:      ${date}`,
+    order.due_date ? `Due:       ${order.due_date}` : null,
+    order.is_rush === 1 ? '⚡ RUSH ORDER' : null,
+    line('-'),
+    '',
+    blocks.join('\n\n'),
+    '',
+    line('='),
+    `TOTAL GARMENTS   ${order.garment_qty || 0} pcs`,
+    `TOTAL            $${grandTotal.toFixed(2)}`,
+    line('='),
+    order.notes ? `\nNotes: ${order.notes}` : null,
+  ].filter(s => s !== null).join('\n')
 }
 
 ipcMain.handle('invoice:pdf', async (_, { order, items }) => {
@@ -495,4 +621,8 @@ ipcMain.handle('invoice:pdf', async (_, { order, items }) => {
   fs.writeFileSync(filePath, pdfBuf)
 
   return { ok: true, filePath }
+})
+
+ipcMain.handle('invoice:text', (_, { order, items }) => {
+  return generateQuoteText(order, items)
 })

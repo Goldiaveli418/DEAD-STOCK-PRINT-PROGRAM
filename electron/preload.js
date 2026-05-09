@@ -57,6 +57,9 @@ contextBridge.exposeInMainWorld('api', {
   // Stats
   stats: { get: () => invoke('stats:get') },
 
-  // Invoice PDF
-  invoice: { pdf: (d) => invoke('invoice:pdf', d) },
+  // Invoice
+  invoice: {
+    pdf:  (d) => invoke('invoice:pdf', d),
+    text: (d) => invoke('invoice:text', d),
+  },
 })
