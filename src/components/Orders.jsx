@@ -78,7 +78,7 @@ function blankItem(printTypes) {
     labor_base: '7',
     prints_on_garment: '1',
     customer_supplied: false,
-    asset_path: '', asset_name: '',
+    assets: [],
     work_file_path: '',
   }
 }
@@ -174,12 +174,13 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
             client_ink_costs: parseInkCosts(i.client_ink_breakdown),
             fill_my_ink: '', fill_client_ink: '',
             labor_base:       String(i.labor_base || 7),
-            asset_path:       i.asset_path || '',
-            asset_name:       i.asset_name || '',
+            assets: (() => {
+              try { const a = JSON.parse(i.item_assets || '[]'); return Array.isArray(a) ? a : [] }
+              catch { return i.asset_path ? [{ file_path: i.asset_path, name: i.asset_name || '' }] : [] }
+            })(),
             work_file_path:   i.work_file_path || '',
             garment_cost_per_piece:   i.garment_cost_per_piece || '',
             client_garment_per_piece: i.client_garment_per_piece || '',
-            _asset_saved: !!(i.asset_path),
           })))
         }
       })
@@ -205,18 +206,23 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
   function applyAsset(idx, asset) {
     setItems(its => its.map((item, i) => {
       if (i !== idx) return item
-      const ink = parseInkCosts(asset.ink_costs)
+      const existing = item.assets || []
+      const alreadyAdded = existing.some(a => a.file_path === asset.file_path)
       return {
         ...item,
-        asset_path:    asset.file_path || item.asset_path,
-        asset_name:    asset.name,
-        shirt_color:   asset.shirt_color || item.shirt_color,
-        shirt_brand:   asset.shirt_brand || item.shirt_brand,
-        ink_costs:     ink,
+        assets: alreadyAdded ? existing : [...existing, { file_path: asset.file_path, name: asset.name, _asset_id: asset.id }],
+        shirt_color:    asset.shirt_color || item.shirt_color,
+        shirt_brand:    asset.shirt_brand || item.shirt_brand,
+        ink_costs:      parseInkCosts(asset.ink_costs),
         work_file_path: asset.work_file_path || item.work_file_path,
-        _asset_id:     asset.id,
       }
     }))
+  }
+
+  function removeItemAsset(idx, assetIdx) {
+    setItems(its => its.map((item, i) =>
+      i !== idx ? item : { ...item, assets: item.assets.filter((_, ai) => ai !== assetIdx) }
+    ))
   }
 
   function fillInkCosts(idx, field, val) {
@@ -233,12 +239,14 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
   async function pickItemAsset(idx) {
     const paths = await window.api.openFile()
     if (!paths.length) return
-    const p = paths[0]
-    const parts = p.split(/[\\/]/)
-    const name = parts[parts.length - 1].replace(/\.[^.]+$/, '')
-    setItems(its => its.map((item, i) =>
-      i !== idx ? item : { ...item, asset_path: p, asset_name: name, _asset_new: true }
-    ))
+    setItems(its => its.map((item, i) => {
+      if (i !== idx) return item
+      const existing = item.assets || []
+      const newFiles = paths
+        .filter(p => !existing.some(a => a.file_path === p))
+        .map(p => ({ file_path: p, name: p.split(/[\\/]/).pop().replace(/\.[^.]+$/, ''), _asset_new: true }))
+      return { ...item, assets: [...existing, ...newFiles] }
+    }))
   }
 
   async function pickWorkFile(idx) {
@@ -279,6 +287,10 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
       size_breakdown:       JSON.stringify(i.sizes || {}),
       ink_cost_breakdown:   JSON.stringify(i.ink_costs || {}),
       client_ink_breakdown: JSON.stringify(i.client_ink_costs || {}),
+      item_assets:          JSON.stringify(i.assets || []),
+      // keep first asset in legacy fields for backward compat
+      asset_path:           (i.assets || [])[0]?.file_path || '',
+      asset_name:           (i.assets || [])[0]?.name || '',
     }))
   }
 
@@ -411,25 +423,30 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
                   </div>
                 )}
 
-                {/* Art file attachment */}
+                {/* Art file attachments (multiple) */}
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="label">Art File</label>
-                    {item.asset_path ? (
-                      <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-black/30 border border-green-500/20">
-                        <span className="text-xs">🖼</span>
-                        <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">{item.asset_name || item.asset_path.split(/[\\/]/).pop()}</span>
-                        <button
-                          type="button"
-                          onClick={() => setItems(its => its.map((it, i) => i !== idx ? it : { ...it, asset_path: '', asset_name: '', _asset_new: false }))}
-                          className="text-slate-600 hover:text-red-400 text-xs shrink-0"
-                        >✕</button>
-                      </div>
-                    ) : (
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="label mb-0">Art Files</label>
+                      {(item.assets || []).length > 0 && (
+                        <button type="button" onClick={() => pickItemAsset(idx)} className="text-[11px] text-green-400/60 hover:text-green-400 transition-colors">+ Add</button>
+                      )}
+                    </div>
+                    {(item.assets || []).length === 0 ? (
                       <button type="button" onClick={() => pickItemAsset(idx)}
                         className="w-full text-xs text-slate-500 hover:text-green-400 py-1.5 rounded-lg border border-dashed border-white/10 hover:border-green-500/30 transition-colors">
-                        + Attach Art File
+                        + Attach Art Files
                       </button>
+                    ) : (
+                      <div className="space-y-1">
+                        {(item.assets || []).map((asset, ai) => (
+                          <div key={ai} className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-black/30 border border-green-500/20">
+                            <span className="text-[11px]">🖼</span>
+                            <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">{asset.name || asset.file_path.split(/[\\/]/).pop()}</span>
+                            <button type="button" onClick={() => removeItemAsset(idx, ai)} className="text-slate-600 hover:text-red-400 text-xs shrink-0">✕</button>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
                   <div>
@@ -798,25 +815,26 @@ export default function Orders({ clientFilter, onClearFilter }) {
 
     // Per-item art files — save new ones and sync ink costs back to existing assets
     for (const item of (items || [])) {
-      if (item.asset_path && item._asset_new) {
-        await window.api.assets.create({
-          client_id:      order.client_id,
-          name:           item.asset_name || item.asset_path.split(/[\\/]/).pop(),
-          file_path:      item.asset_path,
-          notes:          `From order: ${order.title}`,
-          shirt_color:    item.shirt_color || '',
-          shirt_brand:    item.shirt_brand || '',
-          ink_costs:      item.ink_cost_breakdown || '',
-          work_file_path: item.work_file_path || '',
-        })
-      } else if (item.asset_path && !item._asset_new) {
-        // Sync latest ink costs back to the existing asset template
-        await window.api.assets.syncInkCosts({
-          file_path:   item.asset_path,
-          ink_costs:   item.ink_cost_breakdown || '',
-          shirt_color: item.shirt_color || '',
-          shirt_brand: item.shirt_brand || '',
-        })
+      for (const asset of (item.assets || [])) {
+        if (asset._asset_new) {
+          await window.api.assets.create({
+            client_id:      order.client_id,
+            name:           asset.name || asset.file_path.split(/[\\/]/).pop(),
+            file_path:      asset.file_path,
+            notes:          `From order: ${order.title}`,
+            shirt_color:    item.shirt_color || '',
+            shirt_brand:    item.shirt_brand || '',
+            ink_costs:      item.ink_cost_breakdown || '',
+            work_file_path: item.work_file_path || '',
+          })
+        } else {
+          await window.api.assets.syncInkCosts({
+            file_path:   asset.file_path,
+            ink_costs:   item.ink_cost_breakdown || '',
+            shirt_color: item.shirt_color || '',
+            shirt_brand: item.shirt_brand || '',
+          })
+        }
       }
     }
 

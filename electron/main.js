@@ -246,6 +246,7 @@ ipcMain.handle('orderItems:save', (_, { orderId, items }) => {
       customer_supplied:         item.customer_supplied ? 1 : 0,
       asset_path:                item.asset_path || '',
       asset_name:                item.asset_name || '',
+      item_assets:               item.item_assets || '',
       work_file_path:            item.work_file_path || '',
     })
   }
