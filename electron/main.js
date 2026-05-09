@@ -735,12 +735,12 @@ function generateInvoiceHTML(order, items) {
         const locLabor  = qty * ((asset.labor_base == null ? 7 : Number(asset.labor_base)))
         const locPerPc  = (asset.labor_base == null ? 7 : Number(asset.labor_base))
         if (locInk > 0) {
-          locationRows += `<tr><td>Ink — ${locName}</td><td class="r">per size</td><td class="r">$${locInk.toFixed(2)}</td></tr>`
+          locationRows += `<tr><td>Ink — ${locName}</td><td class="r">total</td><td class="r">$${locInk.toFixed(2)}</td></tr>`
         }
         locationRows += `<tr><td>Labor — ${locName}</td><td class="r">$${locPerPc.toFixed(2)}/pc × ${qty}</td><td class="r">$${locLabor.toFixed(2)}</td></tr>`
       }
     } else {
-      if (clientInkTotal > 0) locationRows += `<tr><td>Ink</td><td class="r">per size</td><td class="r">$${clientInkTotal.toFixed(2)}</td></tr>`
+      if (clientInkTotal > 0) locationRows += `<tr><td>Ink</td><td class="r">total</td><td class="r">$${clientInkTotal.toFixed(2)}</td></tr>`
       locationRows += `<tr><td>Print Labor</td><td class="r">$${laborTotal.toFixed(2)}</td><td class="r">$${laborTotal.toFixed(2)}</td></tr>`
     }
 
