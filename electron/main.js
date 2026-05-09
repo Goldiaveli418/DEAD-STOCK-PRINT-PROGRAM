@@ -476,21 +476,39 @@ ipcMain.handle('search:all', (_, query) => {
 // ── Invoice helpers ───────────────────────────────────────────────────────────
 const INVOICE_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL']
 
+function parseAssets(item) {
+  try {
+    const a = JSON.parse(item.item_assets || '[]')
+    return Array.isArray(a) && a.length > 0 ? a : null
+  } catch (_) { return null }
+}
+
 function calcItemTotals(item) {
   const qty = Number(item.quantity) || 0
   let clientInkTotal = 0
-  try {
-    const ink   = JSON.parse(item.client_ink_breakdown || '{}')
-    const sizes = JSON.parse(item.size_breakdown || '{}')
-    clientInkTotal = INVOICE_SIZES.reduce((s, k) => s + (Number(sizes[k]) || 0) * (Number(ink[k]) || 0), 0)
-  } catch (_) {}
-  const laborBase     = Number(item.labor_base) || 7
-  const prints        = Number(item.prints_on_garment) || 1
-  const laborPerPc    = laborBase + 3 * Math.max(0, prints - 1)
-  const laborTotal    = qty * laborPerPc
-  const garmentTotal  = item.customer_supplied ? 0 : (Number(item.client_garment_per_piece) || 0) * qty
-  const itemTotal     = garmentTotal + clientInkTotal + laborTotal
-  return { qty, clientInkTotal, laborTotal, garmentTotal, itemTotal, laborPerPc }
+  let laborTotal     = 0
+  const sizes = (() => { try { return JSON.parse(item.size_breakdown || '{}') } catch { return {} } })()
+
+  const assets = parseAssets(item)
+  if (assets) {
+    for (const asset of assets) {
+      const ink = asset.client_ink_costs || {}
+      clientInkTotal += INVOICE_SIZES.reduce((s, k) => s + (Number(sizes[k]) || 0) * (Number(ink[k]) || 0), 0)
+      laborTotal     += qty * (Number(asset.labor_base) || 7)
+    }
+  } else {
+    try {
+      const ink = JSON.parse(item.client_ink_breakdown || '{}')
+      clientInkTotal = INVOICE_SIZES.reduce((s, k) => s + (Number(sizes[k]) || 0) * (Number(ink[k]) || 0), 0)
+    } catch (_) {}
+    const laborBase = Number(item.labor_base) || 7
+    const prints    = Number(item.prints_on_garment) || 1
+    laborTotal = qty * (laborBase + 3 * Math.max(0, prints - 1))
+  }
+
+  const garmentTotal = item.customer_supplied ? 0 : (Number(item.client_garment_per_piece) || 0) * qty
+  const itemTotal    = garmentTotal + clientInkTotal + laborTotal
+  return { qty, clientInkTotal, laborTotal, garmentTotal, itemTotal }
 }
 
 // ── PDF ───────────────────────────────────────────────────────────────────────
@@ -518,16 +536,31 @@ function generateInvoiceHTML(order, items) {
 
     const garmentLabel = [item.shirt_brand, item.shirt_color].filter(Boolean).join(' · ')
     const printLabel   = [item.description, item.print_type_name].filter(Boolean).join(' — ')
-    const prints       = Number(item.prints_on_garment) || 1
-    const laborDesc    = prints > 1 ? `$${laborPerPc.toFixed(2)}/pc (${prints} print locations)` : `$${laborPerPc.toFixed(2)}/pc`
 
     const garmentRow = !item.customer_supplied && garmentTotal > 0
       ? `<tr><td>Garment</td><td class="r">$${Number(item.client_garment_per_piece || 0).toFixed(2)}/pc × ${qty}</td><td class="r">$${garmentTotal.toFixed(2)}</td></tr>`
       : item.customer_supplied ? `<tr><td>Garment</td><td class="r" colspan="2" style="color:#888">Customer supplied</td></tr>` : ''
 
-    const inkRow = clientInkTotal > 0
-      ? `<tr><td>Ink</td><td class="r">see size pricing</td><td class="r">$${clientInkTotal.toFixed(2)}</td></tr>`
-      : ''
+    // Per-location ink + labor rows
+    let locationRows = ''
+    const assets = parseAssets(item)
+    if (assets && assets.length > 0) {
+      const sizesObj = (() => { try { return JSON.parse(item.size_breakdown || '{}') } catch { return {} } })()
+      for (const asset of assets) {
+        const locName   = (asset.name || (asset.file_path || '').split(/[\\/]/).pop().replace(/\.[^.]+$/, '') || 'Print').replace(/</g, '&lt;')
+        const ink       = asset.client_ink_costs || {}
+        const locInk    = INVOICE_SIZES.reduce((s, k) => s + (Number(sizesObj[k]) || 0) * (Number(ink[k]) || 0), 0)
+        const locLabor  = qty * (Number(asset.labor_base) || 7)
+        const locPerPc  = Number(asset.labor_base) || 7
+        if (locInk > 0) {
+          locationRows += `<tr><td>Ink — ${locName}</td><td class="r">per size</td><td class="r">$${locInk.toFixed(2)}</td></tr>`
+        }
+        locationRows += `<tr><td>Labor — ${locName}</td><td class="r">$${locPerPc.toFixed(2)}/pc × ${qty}</td><td class="r">$${locLabor.toFixed(2)}</td></tr>`
+      }
+    } else {
+      if (clientInkTotal > 0) locationRows += `<tr><td>Ink</td><td class="r">per size</td><td class="r">$${clientInkTotal.toFixed(2)}</td></tr>`
+      locationRows += `<tr><td>Print Labor</td><td class="r">$${laborTotal.toFixed(2)}</td><td class="r">$${laborTotal.toFixed(2)}</td></tr>`
+    }
 
     return `<div class="item-card">
       <div class="item-hdr">
@@ -545,8 +578,7 @@ function generateInvoiceHTML(order, items) {
         <thead><tr><th>Description</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead>
         <tbody>
           ${garmentRow}
-          ${inkRow}
-          <tr><td>Print Labor</td><td class="r">${laborDesc}</td><td class="r">$${laborTotal.toFixed(2)}</td></tr>
+          ${locationRows}
         </tbody>
         <tfoot>
           <tr class="item-sub"><td colspan="2"><b>Item Subtotal</b></td><td class="r"><b>$${itemTotal.toFixed(2)}</b></td></tr>
@@ -657,12 +689,11 @@ function generateQuoteText(order, items) {
 
   let runningTotal = 0
   const blocks = items.map((item, i) => {
-    const { qty, clientInkTotal, laborTotal, garmentTotal, itemTotal, laborPerPc } = calcItemTotals(item)
+    const { qty, clientInkTotal, laborTotal, garmentTotal, itemTotal } = calcItemTotals(item)
     runningTotal += itemTotal
 
     const garmentLabel = [item.shirt_brand, item.shirt_color].filter(Boolean).join(' · ')
     const printLabel   = [item.description, item.print_type_name].filter(Boolean).join(' — ')
-    const prints       = Number(item.prints_on_garment) || 1
 
     let sizeLine = ''
     try {
@@ -671,21 +702,40 @@ function generateQuoteText(order, items) {
       if (parts) sizeLine = `Sizes:     ${parts}  (${qty} pcs total)\n`
     } catch (_) {}
 
-    const pad = (label, val) => `  ${label.padEnd(14)}${val}`
+    const pad = (label, val) => `  ${label.padEnd(18)}${val}`
 
-    const rows = [
-      !item.customer_supplied && garmentTotal > 0
-        ? pad('Garment:', `$${Number(item.client_garment_per_piece || 0).toFixed(2)}/pc × ${qty} = $${garmentTotal.toFixed(2)}`)
-        : item.customer_supplied ? pad('Garment:', 'Customer supplied') : null,
-      clientInkTotal > 0 ? pad('Ink:', `$${clientInkTotal.toFixed(2)}`) : null,
-      pad('Labor:', `$${laborPerPc.toFixed(2)}/pc × ${qty}${prints > 1 ? ` (${prints} locations)` : ''} = $${laborTotal.toFixed(2)}`),
-    ].filter(Boolean).join('\n')
+    const garmentRow = !item.customer_supplied && garmentTotal > 0
+      ? pad('Garment:', `$${Number(item.client_garment_per_piece || 0).toFixed(2)}/pc × ${qty} = $${garmentTotal.toFixed(2)}`)
+      : item.customer_supplied ? pad('Garment:', 'Customer supplied') : null
+
+    const assets = parseAssets(item)
+    let locationLines = ''
+    if (assets && assets.length > 0) {
+      const sizesObj = (() => { try { return JSON.parse(item.size_breakdown || '{}') } catch { return {} } })()
+      locationLines = assets.map(asset => {
+        const locName  = asset.name || (asset.file_path || '').split(/[\\/]/).pop().replace(/\.[^.]+$/, '') || 'Print'
+        const ink      = asset.client_ink_costs || {}
+        const locInk   = INVOICE_SIZES.reduce((s, k) => s + (Number(sizesObj[k]) || 0) * (Number(ink[k]) || 0), 0)
+        const locPerPc = Number(asset.labor_base) || 7
+        const locLabor = qty * locPerPc
+        const lines = []
+        if (locInk > 0) lines.push(pad(`Ink (${locName}):`, `$${locInk.toFixed(2)}`))
+        lines.push(pad(`Labor (${locName}):`, `$${locPerPc.toFixed(2)}/pc × ${qty} = $${locLabor.toFixed(2)}`))
+        return lines.join('\n')
+      }).join('\n')
+    } else {
+      locationLines = [
+        clientInkTotal > 0 ? pad('Ink:', `$${clientInkTotal.toFixed(2)}`) : null,
+        pad('Labor:', `$${laborTotal.toFixed(2)}`),
+      ].filter(Boolean).join('\n')
+    }
 
     return [
       `ITEM ${i + 1}${garmentLabel ? ' — ' + garmentLabel : ''}`,
       printLabel,
       sizeLine.trimEnd(),
-      rows,
+      garmentRow,
+      locationLines,
       `  ${line('-', 44)}`,
       `  ITEM TOTAL       $${itemTotal.toFixed(2)}`,
     ].filter(Boolean).join('\n')

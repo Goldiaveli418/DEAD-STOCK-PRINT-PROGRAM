@@ -35,23 +35,22 @@ function itemQty(item) {
   return SIZES.reduce((sum, s) => sum + (Number(item.sizes?.[s]) || 0), 0)
 }
 
-// my ink cost (what we actually pay)
 function itemMyInk(item) {
-  return SIZES.reduce((sum, s) =>
-    sum + (Number(item.sizes?.[s]) || 0) * (Number(item.ink_costs?.[s]) || 0), 0)
+  return (item.assets || []).reduce((total, asset) =>
+    total + SIZES.reduce((s, sz) =>
+      s + (Number(item.sizes?.[sz]) || 0) * (Number(asset.ink_costs?.[sz]) || 0), 0), 0)
 }
 
-// client ink charge (what we bill them)
 function itemClientInk(item) {
-  return SIZES.reduce((sum, s) =>
-    sum + (Number(item.sizes?.[s]) || 0) * (Number(item.client_ink_costs?.[s]) || 0), 0)
+  return (item.assets || []).reduce((total, asset) =>
+    total + SIZES.reduce((s, sz) =>
+      s + (Number(item.sizes?.[sz]) || 0) * (Number(asset.client_ink_costs?.[sz]) || 0), 0), 0)
 }
 
 function itemLabor(item) {
-  const qty    = itemQty(item)
-  const prints = Number(item.prints_on_garment) || 1
-  const base   = Number(item.labor_base) || 7
-  return qty * (base + EXTRA_LABOR * Math.max(0, prints - 1))
+  const qty = itemQty(item)
+  return (item.assets || []).reduce((total, asset) =>
+    total + qty * (Number(asset.labor_base) || 7), 0)
 }
 
 function itemMyGarment(item) {
@@ -64,19 +63,25 @@ function itemClientGarment(item) {
   return (Number(item.client_garment_per_piece) || 0) * itemQty(item)
 }
 
+function blankAsset(overrides = {}) {
+  return {
+    file_path: '', name: '',
+    ink_costs:        blankInkCosts(),
+    client_ink_costs: blankInkCosts(),
+    fill_my_ink: '', fill_client_ink: '',
+    labor_base: '7',
+    ...overrides,
+  }
+}
+
 function blankItem(printTypes) {
   return {
     shirt_brand: '', shirt_color: '',
     print_type_id: printTypes[0]?.id || '',
     description: '',
     sizes: blankSizes(),
-    ink_costs:        blankInkCosts(),
-    client_ink_costs: blankInkCosts(),
-    fill_my_ink: '', fill_client_ink: '',
     garment_cost_per_piece: '',
     client_garment_per_piece: '',
-    labor_base: '7',
-    prints_on_garment: '1',
     customer_supplied: false,
     assets: [],
     work_file_path: '',
@@ -175,8 +180,26 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
             fill_my_ink: '', fill_client_ink: '',
             labor_base:       String(i.labor_base || 7),
             assets: (() => {
-              try { const a = JSON.parse(i.item_assets || '[]'); return Array.isArray(a) ? a : [] }
-              catch { return i.asset_path ? [{ file_path: i.asset_path, name: i.asset_name || '' }] : [] }
+              try {
+                const a = JSON.parse(i.item_assets || '[]')
+                if (Array.isArray(a) && a.length > 0) {
+                  return a.map(asset => blankAsset({
+                    ...asset,
+                    ink_costs:        parseInkCosts(typeof asset.ink_costs === 'object' ? JSON.stringify(asset.ink_costs) : asset.ink_costs),
+                    client_ink_costs: parseInkCosts(typeof asset.client_ink_costs === 'object' ? JSON.stringify(asset.client_ink_costs) : asset.client_ink_costs),
+                    labor_base: String(asset.labor_base || 7),
+                  }))
+                }
+                if (i.asset_path) {
+                  return [blankAsset({
+                    file_path: i.asset_path, name: i.asset_name || '',
+                    ink_costs:        parseInkCosts(i.ink_cost_breakdown),
+                    client_ink_costs: parseInkCosts(i.client_ink_breakdown),
+                    labor_base: String(i.labor_base || 7),
+                  })]
+                }
+                return []
+              } catch { return [] }
             })(),
             work_file_path:   i.work_file_path || '',
             garment_cost_per_piece:   i.garment_cost_per_piece || '',
@@ -207,13 +230,17 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
     setItems(its => its.map((item, i) => {
       if (i !== idx) return item
       const existing = item.assets || []
-      const alreadyAdded = existing.some(a => a.file_path === asset.file_path)
+      if (existing.some(a => a.file_path === asset.file_path)) {
+        return { ...item, shirt_color: asset.shirt_color || item.shirt_color, shirt_brand: asset.shirt_brand || item.shirt_brand, work_file_path: asset.work_file_path || item.work_file_path }
+      }
       return {
         ...item,
-        assets: alreadyAdded ? existing : [...existing, { file_path: asset.file_path, name: asset.name, _asset_id: asset.id }],
+        assets: [...existing, blankAsset({
+          file_path: asset.file_path, name: asset.name, _asset_id: asset.id,
+          ink_costs: parseInkCosts(asset.ink_costs),
+        })],
         shirt_color:    asset.shirt_color || item.shirt_color,
         shirt_brand:    asset.shirt_brand || item.shirt_brand,
-        ink_costs:      parseInkCosts(asset.ink_costs),
         work_file_path: asset.work_file_path || item.work_file_path,
       }
     }))
@@ -225,14 +252,25 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
     ))
   }
 
-  function fillInkCosts(idx, field, val) {
+  function updateAssetField(itemIdx, assetIdx, field, value) {
     setItems(its => its.map((item, i) => {
-      if (i !== idx) return item
-      const updated = { ...(item[field] || {}) }
-      SIZES.forEach(s => {
-        if (Number(item.sizes?.[s]) > 0) updated[s] = val
-      })
-      return { ...item, [field]: updated }
+      if (i !== itemIdx) return item
+      return { ...item, assets: item.assets.map((a, ai) => ai !== assetIdx ? a : { ...a, [field]: value }) }
+    }))
+  }
+
+  function fillAssetInkCosts(itemIdx, assetIdx, field, val) {
+    setItems(its => its.map((item, i) => {
+      if (i !== itemIdx) return item
+      return {
+        ...item,
+        assets: item.assets.map((asset, ai) => {
+          if (ai !== assetIdx) return asset
+          const updated = { ...(asset[field] || {}) }
+          SIZES.forEach(s => { if (Number(item.sizes?.[s]) > 0) updated[s] = val })
+          return { ...asset, [field]: updated }
+        }),
+      }
     }))
   }
 
@@ -244,7 +282,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
       const existing = item.assets || []
       const newFiles = paths
         .filter(p => !existing.some(a => a.file_path === p))
-        .map(p => ({ file_path: p, name: p.split(/[\\/]/).pop().replace(/\.[^.]+$/, ''), _asset_new: true }))
+        .map(p => blankAsset({ file_path: p, name: p.split(/[\\/]/).pop().replace(/\.[^.]+$/, ''), _asset_new: true }))
       return { ...item, assets: [...existing, ...newFiles] }
     }))
   }
@@ -280,17 +318,30 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
   const [savedIdx, setSavedIdx] = useState(null)
   const [savedAll, setSavedAll] = useState(false)
 
+  function aggregateInkCosts(item, field) {
+    const result = {}
+    SIZES.forEach(s => { result[s] = 0 })
+    ;(item.assets || []).forEach(asset => {
+      SIZES.forEach(s => { result[s] = (Number(result[s]) || 0) + (Number(asset[field]?.[s]) || 0) })
+    })
+    return result
+  }
+
   function serialized() {
     return items.map(i => ({
       ...i,
       quantity:             itemQty(i),
       size_breakdown:       JSON.stringify(i.sizes || {}),
-      ink_cost_breakdown:   JSON.stringify(i.ink_costs || {}),
-      client_ink_breakdown: JSON.stringify(i.client_ink_costs || {}),
-      item_assets:          JSON.stringify(i.assets || []),
-      // keep first asset in legacy fields for backward compat
-      asset_path:           (i.assets || [])[0]?.file_path || '',
-      asset_name:           (i.assets || [])[0]?.name || '',
+      ink_cost_breakdown:   JSON.stringify(aggregateInkCosts(i, 'ink_costs')),
+      client_ink_breakdown: JSON.stringify(aggregateInkCosts(i, 'client_ink_costs')),
+      item_assets:          JSON.stringify((i.assets || []).map(({ fill_my_ink, fill_client_ink, ...a }) => ({
+        ...a,
+        ink_costs:        a.ink_costs || {},
+        client_ink_costs: a.client_ink_costs || {},
+        labor_base:       Number(a.labor_base) || 7,
+      }))),
+      asset_path: (i.assets || [])[0]?.file_path || '',
+      asset_name: (i.assets || [])[0]?.name || '',
     }))
   }
 
@@ -423,48 +474,108 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
                   </div>
                 )}
 
-                {/* Art file attachments (multiple) */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="label mb-0">Art Files</label>
-                      {(item.assets || []).length > 0 && (
-                        <button type="button" onClick={() => pickItemAsset(idx)} className="text-[11px] text-green-400/60 hover:text-green-400 transition-colors">+ Add</button>
-                      )}
-                    </div>
-                    {(item.assets || []).length === 0 ? (
-                      <button type="button" onClick={() => pickItemAsset(idx)}
-                        className="w-full text-xs text-slate-500 hover:text-green-400 py-1.5 rounded-lg border border-dashed border-white/10 hover:border-green-500/30 transition-colors">
-                        + Attach Art Files
-                      </button>
-                    ) : (
-                      <div className="space-y-1">
-                        {(item.assets || []).map((asset, ai) => (
-                          <div key={ai} className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-black/30 border border-green-500/20">
-                            <span className="text-[11px]">🖼</span>
-                            <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">{asset.name || asset.file_path.split(/[\\/]/).pop()}</span>
-                            <button type="button" onClick={() => removeItemAsset(idx, ai)} className="text-slate-600 hover:text-red-400 text-xs shrink-0">✕</button>
+                {/* Print locations — each with its own ink costs + labor */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="label mb-0">Print Locations</label>
+                    <button type="button" onClick={() => pickItemAsset(idx)} className="text-[11px] text-green-400/70 hover:text-green-400 transition-colors">+ Add Location</button>
+                  </div>
+                  {(item.assets || []).length === 0 ? (
+                    <button type="button" onClick={() => pickItemAsset(idx)}
+                      className="w-full text-xs text-slate-500 hover:text-green-400 py-2 rounded-lg border border-dashed border-white/10 hover:border-green-500/30 transition-colors">
+                      + Add Print Location
+                    </button>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {(item.assets || []).map((asset, ai) => {
+                        const assetMyInk     = SIZES.reduce((s, sz) => s + (Number(item.sizes?.[sz])||0)*(Number(asset.ink_costs?.[sz])||0), 0)
+                        const assetClientInk = SIZES.reduce((s, sz) => s + (Number(item.sizes?.[sz])||0)*(Number(asset.client_ink_costs?.[sz])||0), 0)
+                        return (
+                          <div key={ai} className="rounded-lg border border-white/8 bg-black/20 p-2.5 space-y-2">
+                            {/* Location header */}
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] shrink-0">🖼</span>
+                              <span className="text-xs text-slate-200 flex-1 min-w-0 truncate font-medium">
+                                {asset.name || (asset.file_path ? asset.file_path.split(/[\\/]/).pop() : `Location ${ai + 1}`)}
+                              </span>
+                              <button type="button" onClick={() => removeItemAsset(idx, ai)} className="text-slate-600 hover:text-red-400 text-xs shrink-0">✕</button>
+                            </div>
+
+                            {/* Size header */}
+                            <div className="grid gap-1" style={{ gridTemplateColumns: '62px repeat(7, 1fr)' }}>
+                              <div />
+                              {SIZES.map(s => <div key={s} className="text-[9px] text-center text-slate-500 font-medium">{s}</div>)}
+                            </div>
+
+                            {/* My ink row */}
+                            <div className="grid gap-1 items-center" style={{ gridTemplateColumns: '62px repeat(7, 1fr)' }}>
+                              <div className="text-[9px] text-slate-500 leading-tight">My Ink<br/>$/pc</div>
+                              {SIZES.map(s => (
+                                <input key={s} className="input text-xs py-1 text-center px-0.5" type="number" step="0.01" min="0"
+                                  value={asset.ink_costs?.[s] ?? ''}
+                                  onChange={e => updateAssetField(idx, ai, 'ink_costs', { ...asset.ink_costs, [s]: e.target.value })}
+                                  placeholder="0" />
+                              ))}
+                            </div>
+                            <FillRow
+                              label={`My ink: $${assetMyInk.toFixed(2)}`}
+                              value={asset.fill_my_ink}
+                              onChange={v => updateAssetField(idx, ai, 'fill_my_ink', v)}
+                              onFill={() => fillAssetInkCosts(idx, ai, 'ink_costs', asset.fill_my_ink)}
+                            />
+
+                            {/* Client ink row */}
+                            <div className="grid gap-1 items-center mt-1" style={{ gridTemplateColumns: '62px repeat(7, 1fr)' }}>
+                              <div className="text-[9px] text-green-500/70 leading-tight">Client<br/>Ink $/pc</div>
+                              {SIZES.map(s => (
+                                <input key={s} className="input text-xs py-1 text-center px-0.5 border-green-500/20 focus:border-green-500/50" type="number" step="0.01" min="0"
+                                  value={asset.client_ink_costs?.[s] ?? ''}
+                                  onChange={e => updateAssetField(idx, ai, 'client_ink_costs', { ...asset.client_ink_costs, [s]: e.target.value })}
+                                  placeholder="0" />
+                              ))}
+                            </div>
+                            <FillRow
+                              label={`Client ink: $${assetClientInk.toFixed(2)}`}
+                              value={asset.fill_client_ink}
+                              onChange={v => updateAssetField(idx, ai, 'fill_client_ink', v)}
+                              onFill={() => fillAssetInkCosts(idx, ai, 'client_ink_costs', asset.fill_client_ink)}
+                              accent
+                            />
+
+                            {/* Labor for this location */}
+                            <div className="flex items-center justify-between pt-1.5 border-t border-white/5">
+                              <label className="text-[10px] text-slate-500">Labor $/pc</label>
+                              <input
+                                className="input text-xs py-1 w-24 text-center"
+                                type="number" step="0.01" min="0"
+                                value={asset.labor_base}
+                                onChange={e => updateAssetField(idx, ai, 'labor_base', e.target.value)}
+                                placeholder="7.00"
+                              />
+                            </div>
                           </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div>
-                    <label className="label">Work File (GC)</label>
-                    {item.work_file_path ? (
-                      <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-black/30 border border-blue-500/20">
-                        <span className="text-xs">📐</span>
-                        <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">{item.work_file_path.split(/[\\/]/).pop()}</span>
-                        <button type="button" onClick={() => window.api.openPath(item.work_file_path)} className="text-[10px] text-blue-400 hover:text-blue-300 shrink-0">Open</button>
-                        <button type="button" onClick={() => updateItem(idx, 'work_file_path', '')} className="text-slate-600 hover:text-red-400 text-xs shrink-0">✕</button>
-                      </div>
-                    ) : (
-                      <button type="button" onClick={() => pickWorkFile(idx)}
-                        className="w-full text-xs text-slate-500 hover:text-blue-400 py-1.5 rounded-lg border border-dashed border-white/10 hover:border-blue-500/30 transition-colors">
-                        + Link Work File
-                      </button>
-                    )}
-                  </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Work File (GC) */}
+                <div>
+                  <label className="label">Work File (GC)</label>
+                  {item.work_file_path ? (
+                    <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-black/30 border border-blue-500/20">
+                      <span className="text-xs">📐</span>
+                      <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">{item.work_file_path.split(/[\\/]/).pop()}</span>
+                      <button type="button" onClick={() => window.api.openPath(item.work_file_path)} className="text-[10px] text-blue-400 hover:text-blue-300 shrink-0">Open</button>
+                      <button type="button" onClick={() => updateItem(idx, 'work_file_path', '')} className="text-slate-600 hover:text-red-400 text-xs shrink-0">✕</button>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => pickWorkFile(idx)}
+                      className="w-full text-xs text-slate-500 hover:text-blue-400 py-1.5 rounded-lg border border-dashed border-white/10 hover:border-blue-500/30 transition-colors">
+                      + Link Work File
+                    </button>
+                  )}
                 </div>
 
                 {/* Shirt + print */}
@@ -493,16 +604,13 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
                   </div>
                 </div>
 
-                {/* Size / ink table */}
+                {/* Qty by size */}
                 <div>
-                  {/* Header row */}
                   <div className="grid gap-1 mb-0.5" style={{ gridTemplateColumns: '62px repeat(7, 1fr)' }}>
                     <div />
                     {SIZES.map(s => <div key={s} className="text-[9px] text-center text-slate-500 font-medium">{s}</div>)}
                   </div>
-
-                  {/* Qty row */}
-                  <div className="grid gap-1 items-center mb-1" style={{ gridTemplateColumns: '62px repeat(7, 1fr)' }}>
+                  <div className="grid gap-1 items-center" style={{ gridTemplateColumns: '62px repeat(7, 1fr)' }}>
                     <div className="text-[10px] text-slate-400">Qty</div>
                     {SIZES.map(s => (
                       <input key={s} className="input text-xs py-1 text-center px-0.5" type="number" min="0"
@@ -511,80 +619,31 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
                         placeholder="0" />
                     ))}
                   </div>
-
-                  {/* My ink row */}
-                  <div className="grid gap-1 items-center" style={{ gridTemplateColumns: '62px repeat(7, 1fr)' }}>
-                    <div className="text-[9px] text-slate-500 leading-tight">My Ink<br/>$/pc</div>
-                    {SIZES.map(s => (
-                      <input key={s} className="input text-xs py-1 text-center px-0.5" type="number" step="0.01" min="0"
-                        value={item.ink_costs?.[s] ?? ''}
-                        onChange={e => updateItem(idx, 'ink_costs', { ...item.ink_costs, [s]: e.target.value })}
-                        placeholder="0" />
-                    ))}
-                  </div>
-                  <FillRow
-                    label={`My ink cost: $${myInk.toFixed(2)}`}
-                    value={item.fill_my_ink}
-                    onChange={v => updateItem(idx, 'fill_my_ink', v)}
-                    onFill={() => fillInkCosts(idx, 'ink_costs', item.fill_my_ink)}
-                  />
-
-                  {/* Client ink row */}
-                  <div className="grid gap-1 items-center mt-1.5" style={{ gridTemplateColumns: '62px repeat(7, 1fr)' }}>
-                    <div className="text-[9px] text-green-500/70 leading-tight">Client<br/>Ink $/pc</div>
-                    {SIZES.map(s => (
-                      <input key={s} className="input text-xs py-1 text-center px-0.5 border-green-500/20 focus:border-green-500/50" type="number" step="0.01" min="0"
-                        value={item.client_ink_costs?.[s] ?? ''}
-                        onChange={e => updateItem(idx, 'client_ink_costs', { ...item.client_ink_costs, [s]: e.target.value })}
-                        placeholder="0" />
-                    ))}
-                  </div>
-                  <FillRow
-                    label={`Client ink charge: $${clientInk.toFixed(2)}`}
-                    value={item.fill_client_ink}
-                    onChange={v => updateItem(idx, 'fill_client_ink', v)}
-                    onFill={() => fillInkCosts(idx, 'client_ink_costs', item.fill_client_ink)}
-                    accent
-                  />
                 </div>
 
-                {/* Garment cost + prints + labor */}
+                {/* Garment costs */}
                 <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-2">
-                    <div>
-                      <label className="label">My Blank $/pc</label>
-                      <input
-                        className={`input text-xs py-1.5 ${item.customer_supplied ? 'opacity-30 pointer-events-none' : ''}`}
-                        type="number" step="0.01"
-                        value={item.customer_supplied ? '' : item.garment_cost_per_piece}
-                        onChange={e => updateItem(idx, 'garment_cost_per_piece', e.target.value)}
-                        placeholder={item.customer_supplied ? 'supplied' : '0.00'}
-                        disabled={!!item.customer_supplied}
-                      />
-                    </div>
-                    <div>
-                      <label className="label text-green-500/70">Client Blank $/pc</label>
-                      <input
-                        className={`input text-xs py-1.5 border-green-500/20 ${item.customer_supplied ? 'opacity-30 pointer-events-none' : ''}`}
-                        type="number" step="0.01"
-                        value={item.customer_supplied ? '' : item.client_garment_per_piece}
-                        onChange={e => updateItem(idx, 'client_garment_per_piece', e.target.value)}
-                        placeholder={item.customer_supplied ? 'supplied' : '0.00'}
-                        disabled={!!item.customer_supplied}
-                      />
-                    </div>
+                  <div>
+                    <label className="label">My Blank $/pc</label>
+                    <input
+                      className={`input text-xs py-1.5 ${item.customer_supplied ? 'opacity-30 pointer-events-none' : ''}`}
+                      type="number" step="0.01"
+                      value={item.customer_supplied ? '' : item.garment_cost_per_piece}
+                      onChange={e => updateItem(idx, 'garment_cost_per_piece', e.target.value)}
+                      placeholder={item.customer_supplied ? 'supplied' : '0.00'}
+                      disabled={!!item.customer_supplied}
+                    />
                   </div>
-                  <div className="space-y-2">
-                    <div>
-                      <label className="label"># Prints</label>
-                      <input className="input text-xs py-1.5" type="number" min="1" max="10"
-                        value={item.prints_on_garment} onChange={e => updateItem(idx, 'prints_on_garment', e.target.value)} placeholder="1" />
-                    </div>
-                    <div>
-                      <label className="label">Labor $/pc</label>
-                      <input className="input text-xs py-1.5" type="number" step="0.01" min="0"
-                        value={item.labor_base} onChange={e => updateItem(idx, 'labor_base', e.target.value)} placeholder="7.00" />
-                    </div>
+                  <div>
+                    <label className="label text-green-500/70">Client Blank $/pc</label>
+                    <input
+                      className={`input text-xs py-1.5 border-green-500/20 ${item.customer_supplied ? 'opacity-30 pointer-events-none' : ''}`}
+                      type="number" step="0.01"
+                      value={item.customer_supplied ? '' : item.client_garment_per_piece}
+                      onChange={e => updateItem(idx, 'client_garment_per_piece', e.target.value)}
+                      placeholder={item.customer_supplied ? 'supplied' : '0.00'}
+                      disabled={!!item.customer_supplied}
+                    />
                   </div>
                 </div>
 
@@ -816,6 +875,7 @@ export default function Orders({ clientFilter, onClearFilter }) {
     // Per-item art files — save new ones and sync ink costs back to existing assets
     for (const item of (items || [])) {
       for (const asset of (item.assets || [])) {
+        const inkCostsJSON = JSON.stringify(asset.ink_costs || {})
         if (asset._asset_new) {
           await window.api.assets.create({
             client_id:      order.client_id,
@@ -824,13 +884,13 @@ export default function Orders({ clientFilter, onClearFilter }) {
             notes:          `From order: ${order.title}`,
             shirt_color:    item.shirt_color || '',
             shirt_brand:    item.shirt_brand || '',
-            ink_costs:      item.ink_cost_breakdown || '',
+            ink_costs:      inkCostsJSON,
             work_file_path: item.work_file_path || '',
           })
-        } else {
+        } else if (asset.file_path) {
           await window.api.assets.syncInkCosts({
             file_path:   asset.file_path,
-            ink_costs:   item.ink_cost_breakdown || '',
+            ink_costs:   inkCostsJSON,
             shirt_color: item.shirt_color || '',
             shirt_brand: item.shirt_brand || '',
           })
