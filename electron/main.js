@@ -173,6 +173,8 @@ ipcMain.handle('orders:create', (_, data) => {
     ink_cost:          Number(data.ink_cost) || 0,
     labor_cost:        Number(data.labor_cost) || 0,
     sell_price:        Number(data.sell_price) || 0,
+    operator_split:    Number(data.operator_split) || 50,
+    house_split:       Number(data.house_split) || 50,
     created_at:        now(),
   }
   store.orders.push(order)
@@ -199,6 +201,8 @@ ipcMain.handle('orders:update', (_, data) => {
       ink_cost:          Number(data.ink_cost) || 0,
       labor_cost:        Number(data.labor_cost) || 0,
       sell_price:        Number(data.sell_price) || 0,
+      operator_split:    Number(data.operator_split) || 50,
+      house_split:       Number(data.house_split) || 50,
     }
     save()
   }
@@ -228,6 +232,7 @@ ipcMain.handle('orderItems:save', (_, { orderId, items }) => {
       shirt_brand:            item.shirt_brand || '',
       shirt_color:            item.shirt_color || '',
       garment_cost_per_piece: Number(item.garment_cost_per_piece) || 0,
+      labor_base:             Number(item.labor_base) || 7,
       prints_on_garment:      Number(item.prints_on_garment) || 1,
       customer_supplied:      item.customer_supplied ? 1 : 0,
       asset_path:             item.asset_path || '',
@@ -312,4 +317,124 @@ ipcMain.handle('stats:get', () => {
     rushOrders,
     recentOrders,
   }
+})
+
+// ── Invoice PDF ───────────────────────────────────────────────────────────────
+function generateInvoiceHTML(order, items) {
+  const SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL']
+  const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+
+  const itemRows = items.map((item, i) => {
+    let sizesHtml = '—'
+    try {
+      const s = JSON.parse(item.size_breakdown || '{}')
+      const parts = SIZES.filter(k => Number(s[k]) > 0).map(k => `<span>${k}:&nbsp;<b>${s[k]}</b></span>`).join(' ')
+      if (parts) sizesHtml = parts
+    } catch (_) {}
+    const garment = [item.shirt_brand, item.shirt_color ? `(${item.shirt_color})` : ''].filter(Boolean).join(' ')
+    const print   = [item.description, item.print_type_name].filter(Boolean).join(' — ')
+    return `<tr class="${i % 2 === 1 ? 'alt' : ''}">
+      <td class="c">${i + 1}</td>
+      <td>${garment || '—'}</td>
+      <td>${print || '—'}</td>
+      <td class="sz">${sizesHtml}</td>
+      <td class="c">${item.quantity}</td>
+    </tr>`
+  }).join('')
+
+  const priceRow = order.sell_price > 0 ? `
+    <tr class="price-row">
+      <td colspan="4" style="text-align:right;padding-right:12px"><b>Total Price</b></td>
+      <td class="c"><b>$${Number(order.sell_price).toFixed(2)}</b></td>
+    </tr>` : ''
+
+  const notesBlock = order.notes ? `
+    <div class="section">
+      <div class="label">Notes</div>
+      <div class="notes-box">${order.notes.replace(/</g, '&lt;')}</div>
+    </div>` : ''
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#1a1a1a;padding:48px;background:#fff}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:18px;border-bottom:2px solid #22c55e;margin-bottom:28px}
+.brand{font-size:20px;font-weight:700;letter-spacing:-0.5px}.brand em{color:#22c55e;font-style:normal}
+.meta{text-align:right;line-height:1.75;color:#555}.meta strong{color:#111}
+.rush{color:#ef4444;font-weight:700}
+.order-info{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;background:#f7f7f7;border-radius:6px;padding:14px 18px;margin-bottom:24px}
+.oi-block label{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:#999;margin-bottom:2px}
+.oi-block span{font-size:13px;font-weight:600;color:#111}
+.label{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:#999;margin-bottom:6px}
+.section{margin-bottom:22px}
+table{width:100%;border-collapse:collapse}
+th{background:#111;color:#fff;font-size:10px;text-transform:uppercase;letter-spacing:.7px;padding:8px 10px;text-align:left}
+th.c,td.c{text-align:center}
+td{padding:8px 10px;border-bottom:1px solid #eee;vertical-align:top;line-height:1.45}
+tr.alt td{background:#fafafa}
+.sz span{white-space:nowrap;margin-right:5px;font-size:11px;color:#555}
+tr.price-row td{border-top:2px solid #22c55e;border-bottom:none;padding-top:10px}
+.notes-box{background:#f7f7f7;border-left:3px solid #22c55e;padding:10px 14px;border-radius:0 4px 4px 0;line-height:1.6;color:#444}
+.footer{margin-top:36px;padding-top:14px;border-top:1px solid #eee;font-size:10px;color:#bbb;text-align:center}
+</style></head><body>
+
+<div class="hdr">
+  <div>
+    <div class="brand">Dead Stock<em>.</em></div>
+    <div style="font-size:11px;color:#888;margin-top:3px">DTG Print Services</div>
+  </div>
+  <div class="meta">
+    <div><strong>${order.client_name}</strong></div>
+    <div>Date: ${date}</div>
+    ${order.due_date ? `<div>Due: ${order.due_date}</div>` : ''}
+    ${order.is_rush === 1 ? '<div class="rush">⚡ Rush Order</div>' : ''}
+  </div>
+</div>
+
+<div class="order-info">
+  <div class="oi-block"><label>Order</label><span>${order.title}</span></div>
+  <div class="oi-block"><label>Total Garments</label><span>${order.garment_qty || 0} pcs</span></div>
+  <div class="oi-block"><label>Status</label><span style="text-transform:capitalize">${order.status || 'New'}</span></div>
+</div>
+
+<div class="section">
+  <div class="label">Line Items</div>
+  <table>
+    <thead><tr>
+      <th class="c" style="width:36px">#</th>
+      <th style="width:22%">Garment</th>
+      <th>Print</th>
+      <th style="width:32%">Sizes</th>
+      <th class="c" style="width:50px">Qty</th>
+    </tr></thead>
+    <tbody>${itemRows}${priceRow}</tbody>
+  </table>
+</div>
+
+${notesBlock}
+
+<div class="footer">Generated ${date} · Quote valid for 30 days · Thank you for your business</div>
+</body></html>`
+}
+
+ipcMain.handle('invoice:pdf', async (_, { order, items }) => {
+  const { filePath, canceled } = await dialog.showSaveDialog(win, {
+    defaultPath: `Quote-${(order.title || 'Order').replace(/[^a-z0-9]/gi, '-')}.pdf`,
+    filters: [{ name: 'PDF Document', extensions: ['pdf'] }],
+  })
+  if (canceled || !filePath) return { ok: false }
+
+  const html = generateInvoiceHTML(order, items)
+  const tmpPath = path.join(app.getPath('temp'), `pf-invoice-${Date.now()}.html`)
+  fs.writeFileSync(tmpPath, html, 'utf8')
+
+  const { BrowserWindow: BW } = require('electron')
+  const pdfWin = new BW({ show: false, webPreferences: { contextIsolation: true } })
+  await pdfWin.loadURL(`file://${tmpPath}`)
+  const pdfBuf = await pdfWin.webContents.printToPDF({ marginsType: 1, printBackground: true, pageSize: 'Letter' })
+  pdfWin.close()
+  try { fs.unlinkSync(tmpPath) } catch (_) {}
+  fs.writeFileSync(filePath, pdfBuf)
+
+  return { ok: true, filePath }
 })

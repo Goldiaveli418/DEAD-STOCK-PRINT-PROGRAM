@@ -14,7 +14,6 @@ const STATUS_CLASS = {
   done: 'status-done', shipped: 'status-shipped', invoiced: 'status-invoiced',
 }
 
-const BASE_LABOR = 7
 const EXTRA_LABOR = 3
 const SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL']
 
@@ -46,7 +45,8 @@ function itemInk(item) {
 function itemLabor(item) {
   const qty    = itemQty(item)
   const prints = Number(item.prints_on_garment) || 1
-  return qty * (BASE_LABOR + EXTRA_LABOR * Math.max(0, prints - 1))
+  const base   = Number(item.labor_base) || 7
+  return qty * (base + EXTRA_LABOR * Math.max(0, prints - 1))
 }
 
 function itemGarment(item) {
@@ -63,6 +63,7 @@ function blankItem(printTypes) {
     ink_costs: blankInkCosts(),
     fill_ink: '',
     garment_cost_per_piece: '',
+    labor_base: '7',
     prints_on_garment: '1',
     customer_supplied: false,
     asset_path: '',
@@ -99,10 +100,16 @@ function Modal({ title, wide, onClose, children }) {
 }
 
 function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
-  const [form, setForm] = useState(initial || {
-    client_id: clients[0]?.id || '',
-    title: '', status: 'new', is_rush: false,
-    due_date: '', notes: '', sell_price: '',
+  const [form, setForm] = useState(() => {
+    const base = initial || {}
+    return {
+      client_id: base.client_id || clients[0]?.id || '',
+      title: base.title || '', status: base.status || 'new', is_rush: base.is_rush || false,
+      due_date: base.due_date || '', notes: base.notes || '', sell_price: base.sell_price || '',
+      operator_split: String(base.operator_split ?? 50),
+      house_split:    String(base.house_split ?? 50),
+      id: base.id,
+    }
   })
   const [items, setItems] = useState([blankItem(printTypes)])
   const [pendingAssets, setPendingAssets] = useState([])
@@ -116,6 +123,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
             sizes:      parseSizes(i.size_breakdown),
             ink_costs:  parseInkCosts(i.ink_cost_breakdown),
             fill_ink:   '',
+            labor_base: String(i.labor_base || 7),
             asset_path: i.asset_path || '',
             asset_name: i.asset_name || '',
             _asset_saved: !!(i.asset_path),
@@ -376,11 +384,15 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
                   </div>
                 </div>
 
-                {/* Blank cost + # prints */}
-                <div className="grid grid-cols-2 gap-2">
+                {/* Blank cost + # prints + labor base */}
+                <div className="grid grid-cols-3 gap-2">
                   <div>
-                    <label className="label"># Prints on Garment</label>
+                    <label className="label"># Prints</label>
                     <input className="input text-xs py-1.5" type="number" min="1" max="10" value={item.prints_on_garment} onChange={e => updateItem(idx, 'prints_on_garment', e.target.value)} placeholder="1" />
+                  </div>
+                  <div>
+                    <label className="label">Labor $/pc</label>
+                    <input className="input text-xs py-1.5" type="number" step="0.01" min="0" value={item.labor_base} onChange={e => updateItem(idx, 'labor_base', e.target.value)} placeholder="7.00" />
                   </div>
                   <div>
                     <label className="label">Blank $/pc</label>
@@ -389,7 +401,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
                       type="number" step="0.01"
                       value={item.customer_supplied ? '' : item.garment_cost_per_piece}
                       onChange={e => updateItem(idx, 'garment_cost_per_piece', e.target.value)}
-                      placeholder={item.customer_supplied ? 'customer supplied' : '0.00'}
+                      placeholder={item.customer_supplied ? 'supplied' : '0.00'}
                       disabled={!!item.customer_supplied}
                     />
                   </div>
@@ -472,6 +484,63 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
         )}
       </div>
 
+      {/* Internal profit splits */}
+      <div className="rounded-xl bg-[#0d1117] border border-yellow-500/15 p-3 space-y-2.5">
+        <div className="flex items-center gap-2 mb-0.5">
+          <span className="text-[10px] font-semibold text-yellow-500/60 uppercase tracking-wider">Internal — Profit Splits</span>
+          <span className="text-[9px] text-slate-600">not visible to clients</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="label">Operator %</label>
+            <input
+              className="input text-xs py-1.5"
+              type="number" min="0" max="100" step="1"
+              value={form.operator_split}
+              onChange={e => {
+                const v = Math.min(100, Math.max(0, Number(e.target.value) || 0))
+                set('operator_split', String(v))
+                set('house_split', String(100 - v))
+              }}
+              placeholder="50"
+            />
+          </div>
+          <div>
+            <label className="label">House %</label>
+            <input
+              className="input text-xs py-1.5"
+              type="number" min="0" max="100" step="1"
+              value={form.house_split}
+              onChange={e => {
+                const v = Math.min(100, Math.max(0, Number(e.target.value) || 0))
+                set('house_split', String(v))
+                set('operator_split', String(100 - v))
+              }}
+              placeholder="50"
+            />
+          </div>
+        </div>
+        {form.sell_price && profit !== 0 && (() => {
+          const opPct  = Number(form.operator_split) || 0
+          const hsPct  = Number(form.house_split) || 0
+          const opAmt  = profit * opPct / 100
+          const hsAmt  = profit * hsPct / 100
+          const color  = profit >= 0 ? 'text-green-400' : 'text-red-400'
+          return (
+            <div className="grid grid-cols-2 gap-2 text-[11px] font-mono text-center pt-1 border-t border-white/5">
+              <div className="rounded-lg bg-black/20 p-2">
+                <div className="text-slate-500 mb-0.5">Operator ({opPct}%)</div>
+                <div className={color}>{opAmt >= 0 ? '+' : ''}${opAmt.toFixed(2)}</div>
+              </div>
+              <div className="rounded-lg bg-black/20 p-2">
+                <div className="text-slate-500 mb-0.5">House ({hsPct}%)</div>
+                <div className={color}>{hsAmt >= 0 ? '+' : ''}${hsAmt.toFixed(2)}</div>
+              </div>
+            </div>
+          )
+        })()}
+      </div>
+
       <div>
         <label className="label">Notes</label>
         <textarea className="input resize-none" rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Special instructions…" />
@@ -493,6 +562,7 @@ export default function Orders({ clientFilter, onClearFilter }) {
   const [deleting, setDeleting]   = useState(null)
   const [statusFilter, setStatusFilter] = useState('all')
   const [search, setSearch]       = useState('')
+  const [pdfing, setPdfing]       = useState(null)
 
   const load = useCallback(() => {
     window.api.orders.list(clientFilter || undefined).then(setOrders)
@@ -544,6 +614,17 @@ export default function Orders({ clientFilter, onClearFilter }) {
     await window.api.orders.delete(id)
     setDeleting(null)
     load()
+  }
+
+  async function handlePdf(orderId) {
+    setPdfing(orderId)
+    try {
+      const order = await window.api.orders.get(orderId)
+      if (!order) return
+      await window.api.invoice.pdf({ order, items: order.items || [] })
+    } finally {
+      setPdfing(null)
+    }
   }
 
   const clientName = clientFilter ? clients.find(c => c.id === clientFilter)?.name : null
@@ -624,6 +705,13 @@ export default function Orders({ clientFilter, onClearFilter }) {
                         {profit >= 0 ? '+' : ''}${profit.toFixed(2)} profit
                       </div>
                       <div className="flex gap-1 mt-2 justify-end">
+                        <button
+                          onClick={() => handlePdf(o.id)}
+                          disabled={pdfing === o.id}
+                          className="text-xs px-2 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors border border-blue-500/10 disabled:opacity-40"
+                        >
+                          {pdfing === o.id ? '…' : 'PDF'}
+                        </button>
                         <button onClick={() => setModal(o)} className="text-xs px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 transition-colors border border-white/5">Edit</button>
                         <button onClick={() => setDeleting(o)} className="text-xs px-2 py-0.5 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors border border-red-500/10">Del</button>
                       </div>
