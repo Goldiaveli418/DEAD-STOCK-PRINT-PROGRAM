@@ -254,6 +254,36 @@ ipcMain.handle('orderItems:save', (_, { orderId, items }) => {
   return { ok: true }
 })
 
+ipcMain.handle('orderItems:setComplete', (_, { id, completed }) => {
+  const idx = store.orderItems.findIndex(i => i.id === id)
+  if (idx !== -1) {
+    store.orderItems[idx] = { ...store.orderItems[idx], completed: completed ? 1 : 0 }
+    save()
+  }
+  return { ok: true }
+})
+
+ipcMain.handle('orderItems:listActive', () => {
+  const activeStatuses = ['new', 'art', 'printing', 'done']
+  const activeOrders = store.orders.filter(o => activeStatuses.includes(o.status))
+  const clientMap = Object.fromEntries(store.clients.map(c => [c.id, c.name]))
+  const ptMap = Object.fromEntries(store.printTypes.map(p => [p.id, p.name]))
+  return activeOrders
+    .sort((a, b) => {
+      if (a.due_date && b.due_date) return a.due_date.localeCompare(b.due_date)
+      if (a.due_date) return -1
+      if (b.due_date) return 1
+      return b.created_at.localeCompare(a.created_at)
+    })
+    .map(o => ({
+      ...o,
+      client_name: clientMap[o.client_id] || '',
+      items: store.orderItems
+        .filter(i => i.order_id === o.id)
+        .map(i => ({ ...i, print_type_name: ptMap[i.print_type_id] || '' })),
+    }))
+})
+
 // ── Print types ───────────────────────────────────────────────────────────────
 ipcMain.handle('printTypes:list', () => {
   return [...store.printTypes].sort((a, b) => a.name.localeCompare(b.name))

@@ -6,6 +6,7 @@ import Clients from './components/Clients.jsx'
 import Orders from './components/Orders.jsx'
 import Assets from './components/Assets.jsx'
 import Pricing from './components/Pricing.jsx'
+import Production from './components/Production.jsx'
 
 export default function App() {
   const [page, setPage] = useState('dashboard')
@@ -27,11 +28,12 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar page={page} setPage={(p) => { setPage(p); setClientFilter(null) }} />
         <main className="flex-1 overflow-hidden">
-          {page === 'dashboard' && <Dashboard onGoToOrders={goToOrders} />}
-          {page === 'clients'   && <Clients onGoToOrders={goToOrders} onGoToAssets={goToAssets} />}
-          {page === 'orders'    && <Orders clientFilter={clientFilter} onClearFilter={() => setClientFilter(null)} />}
-          {page === 'assets'    && <Assets clientFilter={clientFilter} onClearFilter={() => setClientFilter(null)} />}
-          {page === 'pricing'   && <Pricing />}
+          {page === 'dashboard'  && <Dashboard onGoToOrders={goToOrders} />}
+          {page === 'clients'    && <Clients onGoToOrders={goToOrders} onGoToAssets={goToAssets} />}
+          {page === 'orders'     && <Orders clientFilter={clientFilter} onClearFilter={() => setClientFilter(null)} />}
+          {page === 'production' && <Production />}
+          {page === 'assets'     && <Assets clientFilter={clientFilter} onClearFilter={() => setClientFilter(null)} />}
+          {page === 'pricing'    && <Pricing />}
         </main>
       </div>
     </div>

@@ -31,7 +31,9 @@ contextBridge.exposeInMainWorld('api', {
 
   // Order items
   orderItems: {
-    save: (d) => invoke('orderItems:save', d),
+    save:        (d) => invoke('orderItems:save', d),
+    setComplete: (d) => invoke('orderItems:setComplete', d),
+    listActive:  ()  => invoke('orderItems:listActive'),
   },
 
   // Print types / pricing

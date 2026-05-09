@@ -1,11 +1,12 @@
 import React from 'react'
 
 const NAV = [
-  { id: 'dashboard', icon: '⬡', label: 'Dashboard' },
-  { id: 'clients',   icon: '◈', label: 'Clients'   },
-  { id: 'orders',    icon: '◎', label: 'Orders'     },
-  { id: 'assets',    icon: '⊞', label: 'Assets'     },
-  { id: 'pricing',   icon: '◷', label: 'Pricing'    },
+  { id: 'dashboard',  icon: '⬡', label: 'Dashboard'  },
+  { id: 'clients',    icon: '◈', label: 'Clients'    },
+  { id: 'orders',     icon: '◎', label: 'Orders'     },
+  { id: 'production', icon: '✓', label: 'Production' },
+  { id: 'assets',     icon: '⊞', label: 'Assets'     },
+  { id: 'pricing',    icon: '◷', label: 'Pricing'    },
 ]
 
 export default function Sidebar({ page, setPage }) {
