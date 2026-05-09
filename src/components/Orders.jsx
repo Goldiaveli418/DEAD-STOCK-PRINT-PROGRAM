@@ -16,20 +16,38 @@ const STATUS_CLASS = {
 
 const BASE_LABOR = 7
 const EXTRA_LABOR = 3
+const SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL']
+
+function blankSizes() {
+  return Object.fromEntries(SIZES.map(s => [s, '']))
+}
+
+function parseSizes(raw) {
+  if (!raw) return blankSizes()
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return { ...blankSizes(), ...parsed }
+  } catch (_) {}
+  return blankSizes()
+}
+
+function itemQty(item) {
+  return SIZES.reduce((sum, s) => sum + (Number(item.sizes?.[s]) || 0), 0)
+}
 
 function itemLabor(item) {
-  const qty = Number(item.quantity) || 0
+  const qty = itemQty(item)
   const prints = Number(item.prints_on_garment) || 1
   return qty * (BASE_LABOR + EXTRA_LABOR * Math.max(0, prints - 1))
 }
 
 function itemInk(item) {
-  return (Number(item.ink_cost) || 0) * (Number(item.quantity) || 0)
+  return (Number(item.ink_cost) || 0) * itemQty(item)
 }
 
 function itemGarment(item) {
   if (item.customer_supplied) return 0
-  return (Number(item.garment_cost_per_piece) || 0) * (Number(item.quantity) || 0)
+  return (Number(item.garment_cost_per_piece) || 0) * itemQty(item)
 }
 
 function blankItem(printTypes) {
@@ -37,8 +55,7 @@ function blankItem(printTypes) {
     shirt_brand: '', shirt_color: '',
     print_type_id: printTypes[0]?.id || '',
     description: '',
-    quantity: '',
-    size_breakdown: '',
+    sizes: blankSizes(),
     ink_cost: '',
     garment_cost_per_piece: '',
     prints_on_garment: '1',
@@ -86,7 +103,9 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
   useEffect(() => {
     if (initial?.id) {
       window.api.orders.get(initial.id).then(o => {
-        if (o?.items?.length) setItems(o.items)
+        if (o?.items?.length) {
+          setItems(o.items.map(i => ({ ...i, sizes: parseSizes(i.size_breakdown) })))
+        }
       })
     }
   }, [initial?.id])
@@ -120,12 +139,17 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
   const totalInk     = items.reduce((s, i) => s + itemInk(i), 0)
   const totalGarment = items.reduce((s, i) => s + itemGarment(i), 0)
   const totalLabor   = items.reduce((s, i) => s + itemLabor(i), 0)
-  const totalQty     = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0)
+  const totalQty     = items.reduce((s, i) => s + itemQty(i), 0)
   const totalCost    = totalInk + totalGarment + totalLabor
   const profit       = Number(form.sell_price || 0) - totalCost
 
   async function handleSubmit(e) {
     e.preventDefault()
+    const serializedItems = items.map(i => ({
+      ...i,
+      quantity: itemQty(i),
+      size_breakdown: JSON.stringify(i.sizes || {}),
+    }))
     await onSave(
       {
         ...form,
@@ -136,7 +160,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
         labor_cost: totalLabor,
         customer_supplied: items.every(i => i.customer_supplied) ? 1 : 0,
       },
-      items,
+      serializedItems,
       pendingAssets,
     )
   }
@@ -230,12 +254,30 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
                   </div>
                 </div>
 
-                {/* Numbers */}
-                <div className="grid grid-cols-4 gap-2">
-                  <div>
-                    <label className="label">Qty</label>
-                    <input className="input text-xs py-1.5" type="number" min="1" value={item.quantity} onChange={e => updateItem(idx, 'quantity', e.target.value)} placeholder="0" />
+                {/* Size quantities */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="label mb-0">Qty by Size</label>
+                    <span className="text-[10px] text-slate-500 font-mono">Total: <span className="text-slate-300">{itemQty(item)}</span> pcs</span>
                   </div>
+                  <div className="grid grid-cols-7 gap-1">
+                    {SIZES.map(size => (
+                      <div key={size} className="text-center">
+                        <div className="text-[9px] text-slate-500 mb-0.5 font-medium">{size}</div>
+                        <input
+                          className="input text-xs py-1 text-center px-0.5 w-full"
+                          type="number" min="0"
+                          value={item.sizes?.[size] ?? ''}
+                          onChange={e => updateItem(idx, 'sizes', { ...item.sizes, [size]: e.target.value })}
+                          placeholder="0"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Costs */}
+                <div className="grid grid-cols-3 gap-2">
                   <div>
                     <label className="label"># Prints</label>
                     <input className="input text-xs py-1.5" type="number" min="1" max="10" value={item.prints_on_garment} onChange={e => updateItem(idx, 'prints_on_garment', e.target.value)} placeholder="1" />
@@ -245,7 +287,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
                     <input className="input text-xs py-1.5" type="number" step="0.01" value={item.ink_cost} onChange={e => updateItem(idx, 'ink_cost', e.target.value)} placeholder="0.00" />
                   </div>
                   <div>
-                    <label className="label">{item.customer_supplied ? 'Garment $/pc' : 'Blank $/pc'}</label>
+                    <label className="label">{item.customer_supplied ? 'Blank $/pc' : 'Blank $/pc'}</label>
                     <input
                       className={`input text-xs py-1.5 ${item.customer_supplied ? 'opacity-30 pointer-events-none' : ''}`}
                       type="number" step="0.01"
@@ -255,11 +297,6 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
                       disabled={!!item.customer_supplied}
                     />
                   </div>
-                </div>
-
-                <div>
-                  <label className="label">Sizes</label>
-                  <input className="input text-xs py-1.5" value={item.size_breakdown} onChange={e => updateItem(idx, 'size_breakdown', e.target.value)} placeholder="e.g. S5 M10 L10 XL5" />
                 </div>
 
                 {/* Item totals */}
