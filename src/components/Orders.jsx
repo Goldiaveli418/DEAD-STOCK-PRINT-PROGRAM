@@ -14,6 +14,20 @@ const STATUS_CLASS = {
   done: 'status-done', shipped: 'status-shipped', invoiced: 'status-invoiced',
 }
 
+function Toggle({ on, onChange, label }) {
+  return (
+    <label className="flex items-center gap-2 cursor-pointer select-none">
+      <div
+        className={`w-9 h-5 rounded-full transition-colors relative ${on ? 'bg-green-500' : 'bg-white/10'}`}
+        onClick={() => onChange(!on)}
+      >
+        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${on ? 'translate-x-4' : 'translate-x-0.5'}`} />
+      </div>
+      <span className="text-sm text-slate-300">{label}</span>
+    </label>
+  )
+}
+
 function Modal({ title, wide, onClose, children }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -32,9 +46,13 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
   const [form, setForm] = useState(initial || {
     client_id: clients[0]?.id || '',
     title: '', status: 'new', is_rush: false,
-    due_date: '', notes: '', garment_cost: '', ink_cost: '', sell_price: '',
+    due_date: '', notes: '',
+    shirt_brand: '', shirt_color: '',
+    customer_supplied: false,
+    garment_cost: '', ink_cost: '', sell_price: '',
   })
   const [items, setItems] = useState([])
+  const [pendingAssets, setPendingAssets] = useState([])
 
   useEffect(() => {
     if (initial?.id) {
@@ -45,7 +63,12 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
   function addItem() {
-    setItems(i => [...i, { print_type_id: printTypes[0]?.id || '', description: '', quantity: 1, size_breakdown: '', unit_price: printTypes[0]?.base_cost || '' }])
+    setItems(i => [...i, {
+      print_type_id: printTypes[0]?.id || '',
+      description: '', quantity: 1,
+      size_breakdown: '',
+      unit_price: printTypes[0]?.base_cost || '',
+    }])
   }
 
   function updateItem(idx, k, v) {
@@ -64,17 +87,36 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
     setItems(i => i.filter((_, ii) => ii !== idx))
   }
 
+  async function pickAssets() {
+    const paths = await window.api.openFile()
+    if (!paths.length) return
+    const newAssets = paths.map(p => {
+      const parts = p.split(/[\\/]/)
+      return { file_path: p, name: parts[parts.length - 1].replace(/\.[^.]+$/, '') }
+    })
+    setPendingAssets(a => [...a, ...newAssets.filter(n => !a.some(x => x.file_path === n.file_path))])
+  }
+
+  function removePending(idx) {
+    setPendingAssets(a => a.filter((_, i) => i !== idx))
+  }
+
   async function handleSubmit(e) {
     e.preventDefault()
-    const saved = await onSave({ ...form, is_rush: form.is_rush ? 1 : 0 }, items)
-    return saved
+    await onSave(
+      { ...form, is_rush: form.is_rush ? 1 : 0, customer_supplied: form.customer_supplied ? 1 : 0 },
+      items,
+      pendingAssets,
+    )
   }
 
   const totalItems = items.reduce((s, i) => s + (Number(i.unit_price) * Number(i.quantity || 1)), 0)
-  const profit = Number(form.sell_price || 0) - Number(form.garment_cost || 0) - Number(form.ink_cost || 0)
+  const garmentCost = form.customer_supplied ? 0 : Number(form.garment_cost || 0)
+  const profit = Number(form.sell_price || 0) - garmentCost - Number(form.ink_cost || 0)
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Client + Status */}
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="label">Client *</label>
@@ -91,23 +133,32 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
         </div>
       </div>
 
+      {/* Title */}
       <div>
         <label className="label">Order Title *</label>
         <input className="input" value={form.title} onChange={e => set('title', e.target.value)} placeholder="e.g. Spring Drop – 50 Black Tees" required />
       </div>
 
+      {/* Shirt details */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="label">Shirt Brand</label>
+          <input className="input" value={form.shirt_brand} onChange={e => set('shirt_brand', e.target.value)} placeholder="e.g. Gildan 64000, Bella+Canvas 3001" />
+        </div>
+        <div>
+          <label className="label">Shirt Color</label>
+          <input className="input" value={form.shirt_color} onChange={e => set('shirt_color', e.target.value)} placeholder="e.g. Black, White, Navy" />
+        </div>
+      </div>
+
+      {/* Due date + Rush */}
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="label">Due Date</label>
           <input className="input" type="date" value={form.due_date} onChange={e => set('due_date', e.target.value)} />
         </div>
         <div className="flex items-end pb-0.5">
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <div className={`w-9 h-5 rounded-full transition-colors ${form.is_rush ? 'bg-red-500' : 'bg-white/10'} relative`} onClick={() => set('is_rush', !form.is_rush)}>
-              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${form.is_rush ? 'translate-x-4' : 'translate-x-0.5'}`} />
-            </div>
-            <span className="text-sm text-slate-300">Rush Order ⚡</span>
-          </label>
+          <Toggle on={!!form.is_rush} onChange={v => set('is_rush', v)} label="Rush Order ⚡" />
         </div>
       </div>
 
@@ -162,19 +213,55 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
         )}
       </div>
 
+      {/* Graphic assets */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="label mb-0">Graphic Assets</label>
+          <button type="button" onClick={pickAssets} className="text-xs text-green-400 hover:text-green-300 transition-colors">+ Attach Files</button>
+        </div>
+        {pendingAssets.length === 0 ? (
+          <div className="text-xs text-slate-500 py-2 text-center border border-dashed border-white/10 rounded-lg cursor-pointer hover:border-green-500/30 transition-colors" onClick={pickAssets}>
+            Click to attach design files — auto-saved to client assets
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {pendingAssets.map((a, idx) => (
+              <div key={idx} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#181c2a] border border-white/5">
+                <span className="text-base">🖼</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-slate-200 truncate">{a.name}</div>
+                  <div className="text-[10px] text-slate-500 font-mono truncate">{a.file_path}</div>
+                </div>
+                <button type="button" onClick={() => removePending(idx)} className="text-slate-600 hover:text-red-400 transition-colors text-xs">✕</button>
+              </div>
+            ))}
+            <p className="text-[10px] text-green-500/60 px-1">These will be saved to the client's asset library when you save the order.</p>
+          </div>
+        )}
+      </div>
+
       {/* Costs */}
-      <div className="grid grid-cols-3 gap-3">
-        <div>
-          <label className="label">Garment Cost ($)</label>
-          <input className="input" type="number" step="0.01" value={form.garment_cost} onChange={e => set('garment_cost', e.target.value)} placeholder="0.00" />
-        </div>
-        <div>
-          <label className="label">Ink Cost ($)</label>
-          <input className="input" type="number" step="0.01" value={form.ink_cost} onChange={e => set('ink_cost', e.target.value)} placeholder="0.00" />
-        </div>
-        <div>
-          <label className="label">Sell Price ($)</label>
-          <input className="input" type="number" step="0.01" value={form.sell_price} onChange={e => set('sell_price', e.target.value)} placeholder="0.00" />
+      <div className="space-y-3">
+        <Toggle
+          on={!!form.customer_supplied}
+          onChange={v => { set('customer_supplied', v); if (v) set('garment_cost', '0') }}
+          label="Customer Supplied Blanks"
+        />
+        <div className={`grid gap-3 ${form.customer_supplied ? 'grid-cols-2' : 'grid-cols-3'}`}>
+          {!form.customer_supplied && (
+            <div>
+              <label className="label">Garment Cost ($)</label>
+              <input className="input" type="number" step="0.01" value={form.garment_cost} onChange={e => set('garment_cost', e.target.value)} placeholder="0.00" />
+            </div>
+          )}
+          <div>
+            <label className="label">Ink Cost ($)</label>
+            <input className="input" type="number" step="0.01" value={form.ink_cost} onChange={e => set('ink_cost', e.target.value)} placeholder="0.00" />
+          </div>
+          <div>
+            <label className="label">Sell Price ($)</label>
+            <input className="input" type="number" step="0.01" value={form.sell_price} onChange={e => set('sell_price', e.target.value)} placeholder="0.00" />
+          </div>
         </div>
       </div>
 
@@ -216,7 +303,7 @@ export default function Orders({ clientFilter, onClearFilter }) {
     window.api.printTypes.list().then(setPrintTypes)
   }, [load])
 
-  async function handleSave(form, items) {
+  async function handleSave(form, items, pendingAssets) {
     let order
     if (form.id) {
       order = await window.api.orders.update(form)
@@ -224,6 +311,16 @@ export default function Orders({ clientFilter, onClearFilter }) {
       order = await window.api.orders.create(form)
     }
     if (items) await window.api.orderItems.save({ orderId: order.id, items })
+    if (pendingAssets?.length) {
+      for (const a of pendingAssets) {
+        await window.api.assets.create({
+          client_id: order.client_id,
+          name: a.name,
+          file_path: a.file_path,
+          notes: `From order: ${order.title}`,
+        })
+      }
+    }
     setModal(null)
     load()
   }
@@ -286,17 +383,23 @@ export default function Orders({ clientFilter, onClearFilter }) {
         ) : (
           <div className="space-y-2">
             {filtered.map(o => {
-              const profit = o.sell_price - o.garment_cost - o.ink_cost
+              const profit = o.sell_price - (o.customer_supplied ? 0 : o.garment_cost) - o.ink_cost
               return (
                 <div key={o.id} className="card p-4 hover:border-green-500/15 transition-colors animate-feed-item">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
                         {o.is_rush === 1 && <span className="text-xs text-red-400">⚡</span>}
                         <span className="font-medium text-white truncate">{o.title}</span>
                         <span className={STATUS_CLASS[o.status] || 'status-new'}>{STATUSES.find(s => s.value === o.status)?.label || o.status}</span>
+                        {o.customer_supplied === 1 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/20">Customer Blanks</span>}
                       </div>
                       <div className="text-xs text-slate-400">{o.client_name}</div>
+                      {(o.shirt_brand || o.shirt_color) && (
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          {[o.shirt_brand, o.shirt_color].filter(Boolean).join(' · ')}
+                        </div>
+                      )}
                       {o.due_date && <div className="text-xs text-slate-500 mt-0.5">Due: {o.due_date}</div>}
                     </div>
                     <div className="text-right shrink-0">
@@ -318,7 +421,7 @@ export default function Orders({ clientFilter, onClearFilter }) {
       </div>
 
       {modal && (
-        <Modal title={modal === 'add' ? 'New Order' : `Edit Order`} wide onClose={() => setModal(null)}>
+        <Modal title={modal === 'add' ? 'New Order' : 'Edit Order'} wide onClose={() => setModal(null)}>
           <OrderForm
             initial={modal === 'add' ? (clientFilter ? { client_id: clientFilter } : null) : modal}
             clients={clients}

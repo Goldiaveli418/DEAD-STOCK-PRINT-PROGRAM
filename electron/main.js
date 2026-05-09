@@ -159,16 +159,19 @@ ipcMain.handle('orders:get', (_, id) => {
 ipcMain.handle('orders:create', (_, data) => {
   const order = {
     id: nextId(store.orders),
-    client_id:    Number(data.client_id),
-    title:        data.title,
-    status:       data.status || 'new',
-    is_rush:      data.is_rush ? 1 : 0,
-    due_date:     data.due_date || '',
-    notes:        data.notes || '',
-    garment_cost: Number(data.garment_cost) || 0,
-    ink_cost:     Number(data.ink_cost) || 0,
-    sell_price:   Number(data.sell_price) || 0,
-    created_at:   now(),
+    client_id:         Number(data.client_id),
+    title:             data.title,
+    status:            data.status || 'new',
+    is_rush:           data.is_rush ? 1 : 0,
+    due_date:          data.due_date || '',
+    notes:             data.notes || '',
+    shirt_brand:       data.shirt_brand || '',
+    shirt_color:       data.shirt_color || '',
+    customer_supplied: data.customer_supplied ? 1 : 0,
+    garment_cost:      data.customer_supplied ? 0 : (Number(data.garment_cost) || 0),
+    ink_cost:          Number(data.ink_cost) || 0,
+    sell_price:        Number(data.sell_price) || 0,
+    created_at:        now(),
   }
   store.orders.push(order)
   save()
@@ -180,15 +183,18 @@ ipcMain.handle('orders:update', (_, data) => {
   if (idx !== -1) {
     store.orders[idx] = {
       ...store.orders[idx],
-      client_id:    Number(data.client_id),
-      title:        data.title,
-      status:       data.status,
-      is_rush:      data.is_rush ? 1 : 0,
-      due_date:     data.due_date || '',
-      notes:        data.notes || '',
-      garment_cost: Number(data.garment_cost) || 0,
-      ink_cost:     Number(data.ink_cost) || 0,
-      sell_price:   Number(data.sell_price) || 0,
+      client_id:         Number(data.client_id),
+      title:             data.title,
+      status:            data.status,
+      is_rush:           data.is_rush ? 1 : 0,
+      due_date:          data.due_date || '',
+      notes:             data.notes || '',
+      shirt_brand:       data.shirt_brand || '',
+      shirt_color:       data.shirt_color || '',
+      customer_supplied: data.customer_supplied ? 1 : 0,
+      garment_cost:      data.customer_supplied ? 0 : (Number(data.garment_cost) || 0),
+      ink_cost:          Number(data.ink_cost) || 0,
+      sell_price:        Number(data.sell_price) || 0,
     }
     save()
   }
