@@ -866,6 +866,26 @@ export default function Orders({ clientFilter, onClearFilter }) {
     setQuoteText({ text, title: order.title })
   }
 
+  async function handleDuplicate(id) {
+    await window.api.orders.duplicate(id)
+    load()
+  }
+
+  async function handleSetPaid(id, paid) {
+    await window.api.orders.setPaid({ id, paid })
+    load()
+  }
+
+  function getDueBadge(dueDate, status) {
+    if (!dueDate || ['shipped', 'invoiced'].includes(status)) return null
+    const todayMs  = new Date().setHours(0, 0, 0, 0)
+    const diffDays = Math.round((new Date(dueDate) - todayMs) / 86400000)
+    if (diffDays < 0)   return { label: `${Math.abs(diffDays)}d overdue`, cls: 'text-red-400 bg-red-500/10 border-red-500/20' }
+    if (diffDays === 0) return { label: 'Due today',    cls: 'text-red-400 bg-red-500/10 border-red-500/20' }
+    if (diffDays === 1) return { label: 'Due tomorrow', cls: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' }
+    return null
+  }
+
   const clientName = clientFilter ? clients.find(c => c.id === clientFilter)?.name : null
 
   const filtered = orders.filter(o => {
@@ -915,16 +935,25 @@ export default function Orders({ clientFilter, onClearFilter }) {
         ) : (
           <div className="space-y-2">
             {filtered.map(o => {
-              const myCost = (o.garment_cost || 0) + (o.ink_cost || 0)
-              const profit = o.sell_price - myCost
+              const myCost  = (o.garment_cost || 0) + (o.ink_cost || 0)
+              const profit  = o.sell_price - myCost
+              const dueBadge = getDueBadge(o.due_date, o.status)
               return (
-                <div key={o.id} className="card p-4 hover:border-green-500/15 transition-colors animate-feed-item">
+                <div key={o.id} className={`card p-4 hover:border-green-500/15 transition-colors animate-feed-item ${dueBadge ? 'border-l-2 ' + (dueBadge.cls.includes('red') ? 'border-l-red-500/50' : 'border-l-yellow-500/50') : ''}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                         {o.is_rush === 1 && <span className="text-xs text-red-400">⚡</span>}
                         <span className="font-medium text-white truncate">{o.title}</span>
                         <span className={STATUS_CLASS[o.status] || 'status-new'}>{STATUSES.find(s => s.value === o.status)?.label || o.status}</span>
+                        {o.status === 'invoiced' && (
+                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${o.paid ? 'text-green-400 bg-green-500/10 border-green-500/20' : 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20'}`}>
+                            {o.paid ? '✓ Paid' : 'Unpaid'}
+                          </span>
+                        )}
+                        {dueBadge && (
+                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${dueBadge.cls}`}>{dueBadge.label}</span>
+                        )}
                       </div>
                       <div className="text-xs text-slate-400">{o.client_name}</div>
                       <div className="text-xs text-slate-500 mt-0.5 font-mono">
@@ -939,7 +968,7 @@ export default function Orders({ clientFilter, onClearFilter }) {
                       <div className={`text-xs font-mono ${profit >= 0 ? 'text-emerald-500/70' : 'text-red-400/70'}`}>
                         {profit >= 0 ? '+' : ''}${profit.toFixed(2)} profit
                       </div>
-                      <div className="flex gap-1 mt-2 justify-end">
+                      <div className="flex gap-1 mt-2 justify-end flex-wrap">
                         <button onClick={() => handlePdf(o.id)} disabled={pdfing === o.id}
                           className="text-xs px-2 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors border border-blue-500/10 disabled:opacity-40">
                           {pdfing === o.id ? '…' : 'PDF'}
@@ -947,6 +976,18 @@ export default function Orders({ clientFilter, onClearFilter }) {
                         <button onClick={() => handleText(o.id)}
                           className="text-xs px-2 py-0.5 rounded bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 transition-colors border border-purple-500/10">
                           Text
+                        </button>
+                        {o.status === 'invoiced' && (
+                          <button
+                            onClick={() => handleSetPaid(o.id, !o.paid)}
+                            className={`text-xs px-2 py-0.5 rounded transition-colors border ${o.paid ? 'bg-green-500/10 text-green-400 border-green-500/15 hover:bg-green-500/20' : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/15 hover:bg-yellow-500/20'}`}
+                          >
+                            {o.paid ? '✓ Paid' : 'Mark Paid'}
+                          </button>
+                        )}
+                        <button onClick={() => handleDuplicate(o.id)}
+                          className="text-xs px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 transition-colors border border-white/5">
+                          Dupe
                         </button>
                         <button onClick={() => setModal(o)} className="text-xs px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 transition-colors border border-white/5">Edit</button>
                         <button onClick={() => setDeleting(o)} className="text-xs px-2 py-0.5 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors border border-red-500/10">Del</button>

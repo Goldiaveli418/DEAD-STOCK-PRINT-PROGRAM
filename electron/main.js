@@ -223,6 +223,33 @@ ipcMain.handle('orders:delete', (_, id) => {
   return { ok: true }
 })
 
+ipcMain.handle('orders:duplicate', (_, orderId) => {
+  const order = store.orders.find(o => o.id === orderId)
+  if (!order) return null
+  const newOrder = {
+    ...order,
+    id:         nextId(store.orders),
+    status:     'new',
+    sell_price: 0,
+    paid:       0,
+    created_at: now(),
+  }
+  store.orders.push(newOrder)
+  const srcItems = store.orderItems.filter(i => i.order_id === orderId)
+  let id = nextId(store.orderItems)
+  for (const item of srcItems) {
+    store.orderItems.push({ ...item, id: id++, order_id: newOrder.id, completed: 0, production_notes: '' })
+  }
+  save()
+  return newOrder
+})
+
+ipcMain.handle('orders:setPaid', (_, { id, paid }) => {
+  const idx = store.orders.findIndex(o => o.id === id)
+  if (idx !== -1) { store.orders[idx] = { ...store.orders[idx], paid: paid ? 1 : 0 }; save() }
+  return { ok: true }
+})
+
 // ── Order items ───────────────────────────────────────────────────────────────
 ipcMain.handle('orderItems:save', (_, { orderId, items }) => {
   store.orderItems = store.orderItems.filter(i => i.order_id !== orderId)
@@ -282,6 +309,12 @@ ipcMain.handle('orderItems:listActive', () => {
         .filter(i => i.order_id === o.id)
         .map(i => ({ ...i, print_type_name: ptMap[i.print_type_id] || '' })),
     }))
+})
+
+ipcMain.handle('orderItems:setNotes', (_, { id, notes }) => {
+  const idx = store.orderItems.findIndex(i => i.id === id)
+  if (idx !== -1) { store.orderItems[idx] = { ...store.orderItems[idx], production_notes: notes }; save() }
+  return { ok: true }
 })
 
 // ── Print types ───────────────────────────────────────────────────────────────
@@ -381,6 +414,20 @@ ipcMain.handle('stats:get', () => {
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .slice(0, 5)
     .map(o => ({ ...o, client_name: clientMap[o.client_id] || '' }))
+  const clientMap2  = Object.fromEntries(store.clients.map(c => [c.id, c.name]))
+  const outstanding = store.orders
+    .filter(o => o.status === 'invoiced' && !o.paid)
+    .reduce((s, o) => s + (o.sell_price || 0), 0)
+  const todayMs  = new Date().setHours(0, 0, 0, 0)
+  const dueSoonOrders = store.orders
+    .filter(o => !['shipped', 'invoiced'].includes(o.status) && o.due_date)
+    .map(o => {
+      const diffDays = Math.round((new Date(o.due_date) - todayMs) / 86400000)
+      return { ...o, client_name: clientMap2[o.client_id] || '', diffDays }
+    })
+    .filter(o => o.diffDays <= 3)
+    .sort((a, b) => a.diffDays - b.diffDays)
+    .slice(0, 8)
   return {
     totalOrders:  store.orders.length,
     activeOrders: active.length,
@@ -389,7 +436,40 @@ ipcMain.handle('stats:get', () => {
     costs,
     profit: revenue - costs,
     rushOrders,
+    outstanding,
+    dueSoonOrders,
     recentOrders,
+  }
+})
+
+// ── Store export ──────────────────────────────────────────────────────────────
+ipcMain.handle('store:export', async () => {
+  const { filePath, canceled } = await dialog.showSaveDialog(win, {
+    defaultPath: `printflow-backup-${new Date().toISOString().slice(0, 10)}.json`,
+    filters: [{ name: 'JSON Backup', extensions: ['json'] }],
+  })
+  if (canceled || !filePath) return { ok: false }
+  fs.writeFileSync(filePath, JSON.stringify(store, null, 2), 'utf8')
+  return { ok: true, filePath }
+})
+
+// ── Global search ─────────────────────────────────────────────────────────────
+ipcMain.handle('search:all', (_, query) => {
+  if (!query || query.trim().length < 2) return { clients: [], orders: [], assets: [] }
+  const q = query.toLowerCase()
+  const clientMap = Object.fromEntries(store.clients.map(c => [c.id, c.name]))
+  return {
+    clients: store.clients
+      .filter(c => c.name.toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q))
+      .slice(0, 5),
+    orders: store.orders
+      .filter(o => o.title.toLowerCase().includes(q) || (clientMap[o.client_id] || '').toLowerCase().includes(q))
+      .slice(0, 5)
+      .map(o => ({ ...o, client_name: clientMap[o.client_id] || '' })),
+    assets: store.assets
+      .filter(a => a.name.toLowerCase().includes(q) || (a.shirt_color || '').toLowerCase().includes(q) || (a.shirt_brand || '').toLowerCase().includes(q))
+      .slice(0, 5)
+      .map(a => ({ ...a, client_name: clientMap[a.client_id] || '' })),
   }
 })
 

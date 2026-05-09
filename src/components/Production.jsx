@@ -1,10 +1,21 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 
 const STATUS_LABELS = {
   new: 'New', art: 'Art Review', printing: 'Printing', done: 'Done',
 }
 const STATUS_CLASS = {
   new: 'status-new', art: 'status-art', printing: 'status-printing', done: 'status-done',
+}
+
+function getDueSeverity(dueDate) {
+  if (!dueDate) return null
+  const todayMs  = new Date().setHours(0, 0, 0, 0)
+  const diffDays = Math.round((new Date(dueDate) - todayMs) / 86400000)
+  if (diffDays < 0)  return { label: `${Math.abs(diffDays)}d overdue`, cls: 'text-red-400',    bg: 'bg-red-500/10 border-red-500/20' }
+  if (diffDays === 0) return { label: 'Due today',    cls: 'text-red-400',    bg: 'bg-red-500/10 border-red-500/20' }
+  if (diffDays === 1) return { label: 'Due tomorrow', cls: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' }
+  if (diffDays <= 3)  return { label: `Due in ${diffDays}d`, cls: 'text-yellow-400/70', bg: 'bg-yellow-500/5 border-yellow-500/10' }
+  return null
 }
 
 function ProgressBar({ done, total }) {
@@ -14,10 +25,7 @@ function ProgressBar({ done, total }) {
       <div className="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden">
         <div
           className="h-full rounded-full transition-all duration-300"
-          style={{
-            width: `${pct}%`,
-            background: pct === 100 ? '#22c55e' : pct > 0 ? '#3b82f6' : 'transparent',
-          }}
+          style={{ width: `${pct}%`, background: pct === 100 ? '#22c55e' : pct > 0 ? '#3b82f6' : 'transparent' }}
         />
       </div>
       <span className={`text-[10px] font-mono tabular-nums shrink-0 ${pct === 100 ? 'text-green-400' : 'text-slate-500'}`}>
@@ -27,9 +35,27 @@ function ProgressBar({ done, total }) {
   )
 }
 
+function NoteField({ item, onSave }) {
+  const ref = useRef()
+  return (
+    <div className="px-3 pb-1 pt-0.5">
+      <textarea
+        ref={ref}
+        className="w-full bg-black/30 border border-white/8 rounded-lg text-xs text-slate-300 placeholder:text-slate-600 px-2.5 py-1.5 resize-none outline-none focus:border-white/15 transition-colors"
+        rows={2}
+        defaultValue={item.production_notes || ''}
+        placeholder="Production notes…"
+        onBlur={e => onSave(item.id, e.target.value)}
+      />
+    </div>
+  )
+}
+
 export default function Production() {
-  const [orders, setOrders] = useState([])
-  const [collapsed, setCollapsed] = useState({})
+  const [orders, setOrders]               = useState([])
+  const [collapsed, setCollapsed]         = useState({})
+  const [dismissedAdvance, setDismissedAdvance] = useState({})
+  const [expandedNotes, setExpandedNotes] = useState({})
 
   const load = useCallback(() => {
     window.api.orderItems.listActive().then(setOrders)
@@ -42,6 +68,28 @@ export default function Production() {
     setOrders(prev => prev.map(o => ({
       ...o,
       items: o.items.map(i => i.id === itemId ? { ...i, completed: current ? 0 : 1 } : i),
+    })))
+  }
+
+  async function markAllComplete(order) {
+    const unchecked = order.items.filter(i => !i.completed)
+    await Promise.all(unchecked.map(i => window.api.orderItems.setComplete({ id: i.id, completed: true })))
+    setOrders(prev => prev.map(o =>
+      o.id !== order.id ? o : { ...o, items: o.items.map(i => ({ ...i, completed: 1 })) }
+    ))
+  }
+
+  async function handleAdvanceStatus(order) {
+    await window.api.orders.update({ ...order, status: 'done' })
+    setDismissedAdvance(d => ({ ...d, [order.id]: true }))
+    load()
+  }
+
+  async function saveNote(itemId, notes) {
+    await window.api.orderItems.setNotes({ id: itemId, notes })
+    setOrders(prev => prev.map(o => ({
+      ...o,
+      items: o.items.map(i => i.id === itemId ? { ...i, production_notes: notes } : i),
     })))
   }
 
@@ -62,7 +110,7 @@ export default function Production() {
             <p className="text-xs text-slate-500">{orders.length} active order{orders.length !== 1 ? 's' : ''}</p>
           </div>
           {totalItems > 0 && (
-            <div className="text-right shrink-0">
+            <div className="text-right shrink-0 w-44">
               <div className="text-xs text-slate-500 mb-1">{totalDone} of {totalItems} items complete</div>
               <ProgressBar done={totalDone} total={totalItems} />
             </div>
@@ -78,15 +126,17 @@ export default function Production() {
             <p className="text-sm">No active orders</p>
           </div>
         ) : orders.map(order => {
-          const items = order.items || []
-          const done  = items.filter(i => i.completed).length
+          const items      = order.items || []
+          const done       = items.filter(i => i.completed).length
+          const allDone    = items.length > 0 && done === items.length
           const isCollapsed = !!collapsed[order.id]
-          const allDone = items.length > 0 && done === items.length
+          const due        = getDueSeverity(order.due_date)
+          const showAdvance = allDone && order.status !== 'done' && !dismissedAdvance[order.id]
 
           return (
             <div
               key={order.id}
-              className={`rounded-xl border transition-colors ${allDone ? 'bg-[#0d1a12] border-green-500/20' : 'bg-[#0e1018] border-white/5'}`}
+              className={`rounded-xl border transition-colors ${allDone ? 'bg-[#0d1a12] border-green-500/20' : due ? 'border-white/8' : 'bg-[#0e1018] border-white/5'}`}
             >
               {/* Order header */}
               <button
@@ -99,6 +149,9 @@ export default function Production() {
                     {order.is_rush === 1 && <span className="text-xs text-red-400">⚡</span>}
                     <span className={`font-semibold text-sm truncate ${allDone ? 'text-green-300' : 'text-white'}`}>{order.title}</span>
                     <span className={STATUS_CLASS[order.status] || 'status-new'}>{STATUS_LABELS[order.status] || order.status}</span>
+                    {due && (
+                      <span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border ${due.bg} ${due.cls}`}>{due.label}</span>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 text-xs text-slate-500">
                     <span>{order.client_name}</span>
@@ -112,54 +165,90 @@ export default function Production() {
                 <span className="text-slate-600 text-xs shrink-0 ml-1">{isCollapsed ? '▶' : '▼'}</span>
               </button>
 
+              {/* Auto-advance prompt */}
+              {showAdvance && !isCollapsed && (
+                <div className="mx-4 mb-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-green-500/10 border border-green-500/25">
+                  <span className="text-xs text-green-300 flex-1">All items complete — advance status to Done?</span>
+                  <button
+                    type="button"
+                    onClick={() => handleAdvanceStatus(order)}
+                    className="text-xs px-2.5 py-1 rounded bg-green-500/20 hover:bg-green-500/30 text-green-300 border border-green-500/20 transition-colors"
+                  >
+                    Yes, advance
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDismissedAdvance(d => ({ ...d, [order.id]: true }))}
+                    className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
               {/* Item checklist */}
               {!isCollapsed && items.length > 0 && (
                 <div className="px-4 pb-3 space-y-1 border-t border-white/5 pt-2">
                   {items.map(item => {
-                    const checked = !!item.completed
-                    const qty = Number(item.quantity) || 0
+                    const checked     = !!item.completed
+                    const qty         = Number(item.quantity) || 0
                     const garmentLabel = [item.shirt_brand, item.shirt_color].filter(Boolean).join(' · ')
-                    const descLabel = [item.description, item.print_type_name].filter(Boolean).join(' — ')
+                    const descLabel   = [item.description, item.print_type_name].filter(Boolean).join(' — ')
+                    const noteOpen    = !!expandedNotes[item.id]
 
                     return (
-                      <label
-                        key={item.id}
-                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors select-none ${checked ? 'bg-green-500/8 hover:bg-green-500/12' : 'bg-black/20 hover:bg-white/5'}`}
-                      >
-                        {/* Checkbox */}
-                        <div
-                          onClick={() => toggleItem(item.id, checked)}
-                          className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${checked ? 'bg-green-500 border-green-500' : 'border-white/20 bg-transparent'}`}
-                        >
-                          {checked && (
-                            <svg width="11" height="9" viewBox="0 0 11 9" fill="none">
-                              <path d="M1 4L4 7L10 1" stroke="#000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                          )}
-                        </div>
-
-                        {/* Item info */}
-                        <div className="flex-1 min-w-0" onClick={() => toggleItem(item.id, checked)}>
-                          <div className={`text-sm font-medium truncate ${checked ? 'line-through text-slate-500' : 'text-slate-200'}`}>
-                            {garmentLabel || descLabel || `Item`}
+                      <div key={item.id}>
+                        <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${checked ? 'bg-green-500/8 hover:bg-green-500/12' : 'bg-black/20 hover:bg-white/5'}`}>
+                          {/* Checkbox */}
+                          <div
+                            onClick={() => toggleItem(item.id, checked)}
+                            className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 cursor-pointer transition-colors ${checked ? 'bg-green-500 border-green-500' : 'border-white/20 bg-transparent'}`}
+                          >
+                            {checked && (
+                              <svg width="11" height="9" viewBox="0 0 11 9" fill="none">
+                                <path d="M1 4L4 7L10 1" stroke="#000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            )}
                           </div>
-                          {descLabel && garmentLabel && (
-                            <div className={`text-[11px] truncate ${checked ? 'text-slate-600' : 'text-slate-500'}`}>{descLabel}</div>
-                          )}
+
+                          {/* Item info */}
+                          <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggleItem(item.id, checked)}>
+                            <div className={`text-sm font-medium truncate ${checked ? 'line-through text-slate-500' : 'text-slate-200'}`}>
+                              {garmentLabel || descLabel || 'Item'}
+                            </div>
+                            {descLabel && garmentLabel && (
+                              <div className={`text-[11px] truncate ${checked ? 'text-slate-600' : 'text-slate-500'}`}>{descLabel}</div>
+                            )}
+                          </div>
+
+                          {/* Qty badge */}
+                          <div className={`text-xs font-mono shrink-0 px-2 py-0.5 rounded-full ${checked ? 'bg-green-500/15 text-green-500/60' : 'bg-white/5 text-slate-400'}`}>
+                            {qty} pc{qty !== 1 ? 's' : ''}
+                          </div>
+
+                          {/* Note toggle */}
+                          <button
+                            type="button"
+                            onClick={() => setExpandedNotes(n => ({ ...n, [item.id]: !n[item.id] }))}
+                            className={`text-xs w-6 h-6 flex items-center justify-center rounded shrink-0 transition-colors ${noteOpen || item.production_notes ? 'text-yellow-400/70 bg-yellow-500/10' : 'text-slate-600 hover:text-slate-400 hover:bg-white/5'}`}
+                            title="Production note"
+                          >
+                            {item.production_notes && !noteOpen ? '●' : '✎'}
+                          </button>
                         </div>
 
-                        {/* Qty badge */}
-                        <div className={`text-xs font-mono shrink-0 px-2 py-0.5 rounded-full ${checked ? 'bg-green-500/15 text-green-500/60' : 'bg-white/5 text-slate-400'}`}>
-                          {qty} pc{qty !== 1 ? 's' : ''}
-                        </div>
-                      </label>
+                        {/* Inline note field */}
+                        {noteOpen && (
+                          <NoteField item={item} onSave={saveNote} />
+                        )}
+                      </div>
                     )
                   })}
 
                   {items.length > 1 && done < items.length && (
                     <button
                       type="button"
-                      onClick={() => Promise.all(items.filter(i => !i.completed).map(i => toggleItem(i.id, false)))}
+                      onClick={() => markAllComplete(order)}
                       className="w-full text-[11px] text-slate-600 hover:text-green-400 py-1 transition-colors"
                     >
                       Mark all complete

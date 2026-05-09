@@ -22,11 +22,13 @@ contextBridge.exposeInMainWorld('api', {
 
   // Orders
   orders: {
-    list:   (cid)  => invoke('orders:list', cid),
-    get:    (id)   => invoke('orders:get', id),
-    create: (d)    => invoke('orders:create', d),
-    update: (d)    => invoke('orders:update', d),
-    delete: (id)   => invoke('orders:delete', id),
+    list:      (cid) => invoke('orders:list', cid),
+    get:       (id)  => invoke('orders:get', id),
+    create:    (d)   => invoke('orders:create', d),
+    update:    (d)   => invoke('orders:update', d),
+    delete:    (id)  => invoke('orders:delete', id),
+    duplicate: (id)  => invoke('orders:duplicate', id),
+    setPaid:   (d)   => invoke('orders:setPaid', d),
   },
 
   // Order items
@@ -34,6 +36,7 @@ contextBridge.exposeInMainWorld('api', {
     save:        (d) => invoke('orderItems:save', d),
     setComplete: (d) => invoke('orderItems:setComplete', d),
     listActive:  ()  => invoke('orderItems:listActive'),
+    setNotes:    (d) => invoke('orderItems:setNotes', d),
   },
 
   // Print types / pricing
@@ -63,5 +66,15 @@ contextBridge.exposeInMainWorld('api', {
   invoice: {
     pdf:  (d) => invoke('invoice:pdf', d),
     text: (d) => invoke('invoice:text', d),
+  },
+
+  // Store
+  store: {
+    export: () => invoke('store:export'),
+  },
+
+  // Search
+  search: {
+    all: (q) => invoke('search:all', q),
   },
 })
