@@ -28,7 +28,6 @@ function parseJSON(raw) {
   } catch (_) {}
   return null
 }
-
 function parseSizes(raw)    { return { ...blankSizes(),    ...(parseJSON(raw) || {}) } }
 function parseInkCosts(raw) { return { ...blankInkCosts(), ...(parseJSON(raw) || {}) } }
 
@@ -36,10 +35,16 @@ function itemQty(item) {
   return SIZES.reduce((sum, s) => sum + (Number(item.sizes?.[s]) || 0), 0)
 }
 
-function itemInk(item) {
-  return SIZES.reduce((sum, s) => {
-    return sum + (Number(item.sizes?.[s]) || 0) * (Number(item.ink_costs?.[s]) || 0)
-  }, 0)
+// my ink cost (what we actually pay)
+function itemMyInk(item) {
+  return SIZES.reduce((sum, s) =>
+    sum + (Number(item.sizes?.[s]) || 0) * (Number(item.ink_costs?.[s]) || 0), 0)
+}
+
+// client ink charge (what we bill them)
+function itemClientInk(item) {
+  return SIZES.reduce((sum, s) =>
+    sum + (Number(item.sizes?.[s]) || 0) * (Number(item.client_ink_costs?.[s]) || 0), 0)
 }
 
 function itemLabor(item) {
@@ -49,9 +54,14 @@ function itemLabor(item) {
   return qty * (base + EXTRA_LABOR * Math.max(0, prints - 1))
 }
 
-function itemGarment(item) {
+function itemMyGarment(item) {
   if (item.customer_supplied) return 0
   return (Number(item.garment_cost_per_piece) || 0) * itemQty(item)
+}
+
+function itemClientGarment(item) {
+  if (item.customer_supplied) return 0
+  return (Number(item.client_garment_per_piece) || 0) * itemQty(item)
 }
 
 function blankItem(printTypes) {
@@ -60,14 +70,16 @@ function blankItem(printTypes) {
     print_type_id: printTypes[0]?.id || '',
     description: '',
     sizes: blankSizes(),
-    ink_costs: blankInkCosts(),
-    fill_ink: '',
+    ink_costs:        blankInkCosts(),
+    client_ink_costs: blankInkCosts(),
+    fill_my_ink: '', fill_client_ink: '',
     garment_cost_per_piece: '',
+    client_garment_per_piece: '',
     labor_base: '7',
     prints_on_garment: '1',
     customer_supplied: false,
-    asset_path: '',
-    asset_name: '',
+    asset_path: '', asset_name: '',
+    work_file_path: '',
   }
 }
 
@@ -99,33 +111,74 @@ function Modal({ title, wide, onClose, children }) {
   )
 }
 
+function FillRow({ label, value, onChange, onFill, accent }) {
+  return (
+    <div className="flex items-center justify-between mt-1 gap-2">
+      <span className={`text-[10px] font-mono ${accent ? 'text-green-400/70' : 'text-slate-500'}`}>{label}</span>
+      <div className="flex items-center gap-1">
+        <input
+          className="input text-xs py-0.5 w-20 text-center"
+          type="number" step="0.01" min="0"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder="$/pc"
+        />
+        <button
+          type="button"
+          onClick={onFill}
+          className={`text-[11px] px-2 py-0.5 rounded border transition-colors whitespace-nowrap ${accent ? 'bg-green-500/10 hover:bg-green-500/20 text-green-400 border-green-500/20' : 'bg-white/5 hover:bg-white/10 text-slate-400 border-white/10'}`}
+        >Fill →</button>
+      </div>
+    </div>
+  )
+}
+
 function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
   const [form, setForm] = useState(() => {
-    const base = initial || {}
+    const b = initial || {}
     return {
-      client_id: base.client_id || clients[0]?.id || '',
-      title: base.title || '', status: base.status || 'new', is_rush: base.is_rush || false,
-      due_date: base.due_date || '', notes: base.notes || '', sell_price: base.sell_price || '',
-      operator_split: String(base.operator_split ?? 50),
-      house_split:    String(base.house_split ?? 50),
-      id: base.id,
+      client_id:      b.client_id || clients[0]?.id || '',
+      title:          b.title || '',
+      status:         b.status || 'new',
+      is_rush:        b.is_rush || false,
+      due_date:       b.due_date || '',
+      notes:          b.notes || '',
+      sell_price:     b.sell_price || '',
+      operator_split: String(b.operator_split ?? 50),
+      house_split:    String(b.house_split ?? 50),
+      id:             b.id,
     }
   })
-  const [items, setItems] = useState([blankItem(printTypes)])
+  const [items, setItems]               = useState([blankItem(printTypes)])
   const [pendingAssets, setPendingAssets] = useState([])
+  const [clientAssets, setClientAssets] = useState([])
 
+  // Load client assets whenever client changes
+  useEffect(() => {
+    if (form.client_id) {
+      window.api.assets.list(Number(form.client_id)).then(setClientAssets)
+    } else {
+      setClientAssets([])
+    }
+  }, [form.client_id])
+
+  // Load existing order items
   useEffect(() => {
     if (initial?.id) {
       window.api.orders.get(initial.id).then(o => {
         if (o?.items?.length) {
           setItems(o.items.map(i => ({
             ...i,
-            sizes:      parseSizes(i.size_breakdown),
-            ink_costs:  parseInkCosts(i.ink_cost_breakdown),
-            fill_ink:   '',
-            labor_base: String(i.labor_base || 7),
-            asset_path: i.asset_path || '',
-            asset_name: i.asset_name || '',
+            sizes:            parseSizes(i.size_breakdown),
+            ink_costs:        parseInkCosts(i.ink_cost_breakdown),
+            client_ink_costs: parseInkCosts(i.client_ink_breakdown),
+            fill_my_ink: '', fill_client_ink: '',
+            labor_base:       String(i.labor_base || 7),
+            asset_path:       i.asset_path || '',
+            asset_name:       i.asset_name || '',
+            work_file_path:   i.work_file_path || '',
+            garment_cost_per_piece:   i.garment_cost_per_piece || '',
+            client_garment_per_piece: i.client_garment_per_piece || '',
             _asset_saved: !!(i.asset_path),
           })))
         }
@@ -141,7 +194,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
   }
 
   function updateItem(idx, k, v) {
-    setItems(items => items.map((item, i) => i !== idx ? item : { ...item, [k]: v }))
+    setItems(its => its.map((item, i) => i !== idx ? item : { ...item, [k]: v }))
   }
 
   function removeItem(idx) {
@@ -149,10 +202,27 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
     setItems(i => i.filter((_, ii) => ii !== idx))
   }
 
-  function fillInkCosts(idx, val) {
-    setItems(items => items.map((item, i) =>
+  function applyAsset(idx, asset) {
+    setItems(its => its.map((item, i) => {
+      if (i !== idx) return item
+      const ink = parseInkCosts(asset.ink_costs)
+      return {
+        ...item,
+        asset_path:    asset.file_path || item.asset_path,
+        asset_name:    asset.name,
+        shirt_color:   asset.shirt_color || item.shirt_color,
+        shirt_brand:   asset.shirt_brand || item.shirt_brand,
+        ink_costs:     ink,
+        work_file_path: asset.work_file_path || item.work_file_path,
+        _asset_id:     asset.id,
+      }
+    }))
+  }
+
+  function fillInkCosts(idx, field, val) {
+    setItems(its => its.map((item, i) =>
       i !== idx ? item
-        : { ...item, ink_costs: Object.fromEntries(SIZES.map(s => [s, val])) }
+        : { ...item, [field]: Object.fromEntries(SIZES.map(s => [s, val])) }
     ))
   }
 
@@ -162,9 +232,15 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
     const p = paths[0]
     const parts = p.split(/[\\/]/)
     const name = parts[parts.length - 1].replace(/\.[^.]+$/, '')
-    setItems(items => items.map((item, i) =>
+    setItems(its => its.map((item, i) =>
       i !== idx ? item : { ...item, asset_path: p, asset_name: name, _asset_new: true }
     ))
+  }
+
+  async function pickWorkFile(idx) {
+    const paths = await window.api.openFile()
+    if (!paths.length) return
+    updateItem(idx, 'work_file_path', paths[0])
   }
 
   async function pickOrderAssets() {
@@ -177,30 +253,39 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
     setPendingAssets(a => [...a, ...next.filter(n => !a.some(x => x.file_path === n.file_path))])
   }
 
-  const totalInk     = items.reduce((s, i) => s + itemInk(i), 0)
-  const totalGarment = items.reduce((s, i) => s + itemGarment(i), 0)
-  const totalLabor   = items.reduce((s, i) => s + itemLabor(i), 0)
-  const totalQty     = items.reduce((s, i) => s + itemQty(i), 0)
-  const totalCost    = totalInk + totalGarment + totalLabor
-  const profit       = Number(form.sell_price || 0) - totalCost
+  // Totals
+  const totalMyInk       = items.reduce((s, i) => s + itemMyInk(i), 0)
+  const totalClientInk   = items.reduce((s, i) => s + itemClientInk(i), 0)
+  const totalMyGarment   = items.reduce((s, i) => s + itemMyGarment(i), 0)
+  const totalClientGarment = items.reduce((s, i) => s + itemClientGarment(i), 0)
+  const totalLabor       = items.reduce((s, i) => s + itemLabor(i), 0)
+  const totalQty         = items.reduce((s, i) => s + itemQty(i), 0)
+  const suggestedSell    = totalClientGarment + totalClientInk
+  const myCost           = totalMyGarment + totalMyInk   // true out-of-pocket
+  const sellNum          = Number(form.sell_price || 0)
+  const profit           = sellNum - myCost              // labor IS profit
 
   async function handleSubmit(e) {
     e.preventDefault()
     const serializedItems = items.map(i => ({
       ...i,
-      quantity:           itemQty(i),
-      size_breakdown:     JSON.stringify(i.sizes || {}),
-      ink_cost_breakdown: JSON.stringify(i.ink_costs || {}),
+      quantity:              itemQty(i),
+      size_breakdown:        JSON.stringify(i.sizes || {}),
+      ink_cost_breakdown:    JSON.stringify(i.ink_costs || {}),
+      client_ink_breakdown:  JSON.stringify(i.client_ink_costs || {}),
     }))
+
     await onSave(
       {
         ...form,
-        is_rush:           form.is_rush ? 1 : 0,
-        garment_qty:       totalQty,
-        ink_cost:          totalInk,
-        garment_cost:      totalGarment,
-        labor_cost:        totalLabor,
-        customer_supplied: items.every(i => i.customer_supplied) ? 1 : 0,
+        is_rush:             form.is_rush ? 1 : 0,
+        garment_qty:         totalQty,
+        ink_cost:            totalMyInk,
+        client_ink_cost:     totalClientInk,
+        garment_cost:        totalMyGarment,
+        client_garment_cost: totalClientGarment,
+        labor_cost:          totalLabor,
+        customer_supplied:   items.every(i => i.customer_supplied) ? 1 : 0,
       },
       serializedItems,
       pendingAssets,
@@ -255,14 +340,18 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
 
         <div className="space-y-3">
           {items.map((item, idx) => {
-            const labor = itemLabor(item)
-            const ink   = itemInk(item)
-            const gmt   = itemGarment(item)
-            const qty   = itemQty(item)
+            const myInk       = itemMyInk(item)
+            const clientInk   = itemClientInk(item)
+            const myGmt       = itemMyGarment(item)
+            const clientGmt   = itemClientGarment(item)
+            const labor       = itemLabor(item)
+            const qty         = itemQty(item)
+            const itemProfit  = (clientGmt + clientInk) - (myGmt + myInk) + labor
+
             return (
               <div key={idx} className="p-3 rounded-xl bg-[#181c2a] border border-white/5 space-y-2.5">
 
-                {/* Item header row */}
+                {/* Header */}
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Item {idx + 1}</span>
                   <div className="flex items-center gap-3">
@@ -273,28 +362,68 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
                   </div>
                 </div>
 
-                {/* Art attachment */}
-                {item.asset_path ? (
-                  <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-black/30 border border-green-500/20">
-                    <span className="text-xs">🖼</span>
-                    <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">{item.asset_name || item.asset_path.split(/[\\/]/).pop()}</span>
-                    <button
-                      type="button"
-                      onClick={() => setItems(its => its.map((it, i) => i !== idx ? it : { ...it, asset_path: '', asset_name: '', _asset_new: false }))}
-                      className="text-slate-600 hover:text-red-400 transition-colors text-xs shrink-0"
-                    >✕</button>
+                {/* Asset picker — select from saved client assets */}
+                {clientAssets.length > 0 && (
+                  <div>
+                    <label className="label">Use Saved Asset</label>
+                    <select
+                      className="input text-xs py-1.5"
+                      value=""
+                      onChange={e => {
+                        const a = clientAssets.find(x => x.id === Number(e.target.value))
+                        if (a) applyAsset(idx, a)
+                      }}
+                    >
+                      <option value="">— Pick from client assets —</option>
+                      {clientAssets.map(a => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}{a.shirt_color ? ` · ${a.shirt_color}` : ''}{a.shirt_brand ? ` · ${a.shirt_brand}` : ''}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => pickItemAsset(idx)}
-                    className="w-full text-xs text-slate-500 hover:text-green-400 py-1.5 rounded-lg border border-dashed border-white/10 hover:border-green-500/30 transition-colors"
-                  >
-                    + Attach Art File
-                  </button>
                 )}
 
-                {/* Shirt brand / color / print type / description */}
+                {/* Art file attachment */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="label">Art File</label>
+                    {item.asset_path ? (
+                      <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-black/30 border border-green-500/20">
+                        <span className="text-xs">🖼</span>
+                        <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">{item.asset_name || item.asset_path.split(/[\\/]/).pop()}</span>
+                        <button
+                          type="button"
+                          onClick={() => setItems(its => its.map((it, i) => i !== idx ? it : { ...it, asset_path: '', asset_name: '', _asset_new: false }))}
+                          className="text-slate-600 hover:text-red-400 text-xs shrink-0"
+                        >✕</button>
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => pickItemAsset(idx)}
+                        className="w-full text-xs text-slate-500 hover:text-green-400 py-1.5 rounded-lg border border-dashed border-white/10 hover:border-green-500/30 transition-colors">
+                        + Attach Art File
+                      </button>
+                    )}
+                  </div>
+                  <div>
+                    <label className="label">Work File (GC)</label>
+                    {item.work_file_path ? (
+                      <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-black/30 border border-blue-500/20">
+                        <span className="text-xs">📐</span>
+                        <span className="text-xs text-slate-300 flex-1 min-w-0 truncate">{item.work_file_path.split(/[\\/]/).pop()}</span>
+                        <button type="button" onClick={() => window.api.openPath(item.work_file_path)} className="text-[10px] text-blue-400 hover:text-blue-300 shrink-0">Open</button>
+                        <button type="button" onClick={() => updateItem(idx, 'work_file_path', '')} className="text-slate-600 hover:text-red-400 text-xs shrink-0">✕</button>
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => pickWorkFile(idx)}
+                        className="w-full text-xs text-slate-500 hover:text-blue-400 py-1.5 rounded-lg border border-dashed border-white/10 hover:border-blue-500/30 transition-colors">
+                        + Link Work File
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Shirt + print */}
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="label">Shirt Brand</label>
@@ -322,97 +451,119 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
 
                 {/* Size / ink table */}
                 <div>
-                  {/* Column headers */}
-                  <div className="grid gap-1 mb-0.5" style={{ gridTemplateColumns: '52px repeat(7, 1fr)' }}>
+                  {/* Header row */}
+                  <div className="grid gap-1 mb-0.5" style={{ gridTemplateColumns: '62px repeat(7, 1fr)' }}>
                     <div />
-                    {SIZES.map(s => (
-                      <div key={s} className="text-[9px] text-center text-slate-500 font-medium">{s}</div>
-                    ))}
+                    {SIZES.map(s => <div key={s} className="text-[9px] text-center text-slate-500 font-medium">{s}</div>)}
                   </div>
 
                   {/* Qty row */}
-                  <div className="grid gap-1 items-center mb-1" style={{ gridTemplateColumns: '52px repeat(7, 1fr)' }}>
+                  <div className="grid gap-1 items-center mb-1" style={{ gridTemplateColumns: '62px repeat(7, 1fr)' }}>
                     <div className="text-[10px] text-slate-400">Qty</div>
                     {SIZES.map(s => (
-                      <input
-                        key={s}
-                        className="input text-xs py-1 text-center px-0.5"
-                        type="number" min="0"
+                      <input key={s} className="input text-xs py-1 text-center px-0.5" type="number" min="0"
                         value={item.sizes?.[s] ?? ''}
                         onChange={e => updateItem(idx, 'sizes', { ...item.sizes, [s]: e.target.value })}
-                        placeholder="0"
-                      />
+                        placeholder="0" />
                     ))}
                   </div>
 
-                  {/* Ink $/pc row */}
-                  <div className="grid gap-1 items-center" style={{ gridTemplateColumns: '52px repeat(7, 1fr)' }}>
-                    <div className="text-[10px] text-slate-400 leading-tight">Ink<br/>$/pc</div>
+                  {/* My ink row */}
+                  <div className="grid gap-1 items-center" style={{ gridTemplateColumns: '62px repeat(7, 1fr)' }}>
+                    <div className="text-[9px] text-slate-500 leading-tight">My Ink<br/>$/pc</div>
                     {SIZES.map(s => (
-                      <input
-                        key={s}
-                        className="input text-xs py-1 text-center px-0.5"
-                        type="number" step="0.01" min="0"
+                      <input key={s} className="input text-xs py-1 text-center px-0.5" type="number" step="0.01" min="0"
                         value={item.ink_costs?.[s] ?? ''}
                         onChange={e => updateItem(idx, 'ink_costs', { ...item.ink_costs, [s]: e.target.value })}
-                        placeholder="0"
-                      />
+                        placeholder="0" />
                     ))}
                   </div>
+                  <FillRow
+                    label={`My ink cost: $${myInk.toFixed(2)}`}
+                    value={item.fill_my_ink}
+                    onChange={v => updateItem(idx, 'fill_my_ink', v)}
+                    onFill={() => fillInkCosts(idx, 'ink_costs', item.fill_my_ink)}
+                  />
 
-                  {/* Fill ink + totals */}
-                  <div className="flex items-center justify-between mt-1.5 gap-2">
-                    <span className="text-[10px] text-slate-500 font-mono">
-                      {qty} pcs · ink <span className="text-slate-400">${ink.toFixed(2)}</span>
-                    </span>
-                    <div className="flex items-center gap-1">
+                  {/* Client ink row */}
+                  <div className="grid gap-1 items-center mt-1.5" style={{ gridTemplateColumns: '62px repeat(7, 1fr)' }}>
+                    <div className="text-[9px] text-green-500/70 leading-tight">Client<br/>Ink $/pc</div>
+                    {SIZES.map(s => (
+                      <input key={s} className="input text-xs py-1 text-center px-0.5 border-green-500/20 focus:border-green-500/50" type="number" step="0.01" min="0"
+                        value={item.client_ink_costs?.[s] ?? ''}
+                        onChange={e => updateItem(idx, 'client_ink_costs', { ...item.client_ink_costs, [s]: e.target.value })}
+                        placeholder="0" />
+                    ))}
+                  </div>
+                  <FillRow
+                    label={`Client ink charge: $${clientInk.toFixed(2)}`}
+                    value={item.fill_client_ink}
+                    onChange={v => updateItem(idx, 'fill_client_ink', v)}
+                    onFill={() => fillInkCosts(idx, 'client_ink_costs', item.fill_client_ink)}
+                    accent
+                  />
+                </div>
+
+                {/* Garment cost + prints + labor */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-2">
+                    <div>
+                      <label className="label">My Blank $/pc</label>
                       <input
-                        className="input text-xs py-0.5 w-20 text-center"
-                        type="number" step="0.01" min="0"
-                        value={item.fill_ink ?? ''}
-                        onChange={e => updateItem(idx, 'fill_ink', e.target.value)}
-                        placeholder="$/pc"
+                        className={`input text-xs py-1.5 ${item.customer_supplied ? 'opacity-30 pointer-events-none' : ''}`}
+                        type="number" step="0.01"
+                        value={item.customer_supplied ? '' : item.garment_cost_per_piece}
+                        onChange={e => updateItem(idx, 'garment_cost_per_piece', e.target.value)}
+                        placeholder={item.customer_supplied ? 'supplied' : '0.00'}
+                        disabled={!!item.customer_supplied}
                       />
-                      <button
-                        type="button"
-                        onClick={() => fillInkCosts(idx, item.fill_ink)}
-                        className="text-[11px] px-2 py-0.5 rounded bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/20 transition-colors whitespace-nowrap"
-                      >
-                        Fill all →
-                      </button>
+                    </div>
+                    <div>
+                      <label className="label text-green-500/70">Client Blank $/pc</label>
+                      <input
+                        className={`input text-xs py-1.5 border-green-500/20 ${item.customer_supplied ? 'opacity-30 pointer-events-none' : ''}`}
+                        type="number" step="0.01"
+                        value={item.customer_supplied ? '' : item.client_garment_per_piece}
+                        onChange={e => updateItem(idx, 'client_garment_per_piece', e.target.value)}
+                        placeholder={item.customer_supplied ? 'supplied' : '0.00'}
+                        disabled={!!item.customer_supplied}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div>
+                      <label className="label"># Prints</label>
+                      <input className="input text-xs py-1.5" type="number" min="1" max="10"
+                        value={item.prints_on_garment} onChange={e => updateItem(idx, 'prints_on_garment', e.target.value)} placeholder="1" />
+                    </div>
+                    <div>
+                      <label className="label">Labor $/pc</label>
+                      <input className="input text-xs py-1.5" type="number" step="0.01" min="0"
+                        value={item.labor_base} onChange={e => updateItem(idx, 'labor_base', e.target.value)} placeholder="7.00" />
                     </div>
                   </div>
                 </div>
 
-                {/* Blank cost + # prints + labor base */}
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className="label"># Prints</label>
-                    <input className="input text-xs py-1.5" type="number" min="1" max="10" value={item.prints_on_garment} onChange={e => updateItem(idx, 'prints_on_garment', e.target.value)} placeholder="1" />
-                  </div>
-                  <div>
-                    <label className="label">Labor $/pc</label>
-                    <input className="input text-xs py-1.5" type="number" step="0.01" min="0" value={item.labor_base} onChange={e => updateItem(idx, 'labor_base', e.target.value)} placeholder="7.00" />
-                  </div>
-                  <div>
-                    <label className="label">Blank $/pc</label>
-                    <input
-                      className={`input text-xs py-1.5 ${item.customer_supplied ? 'opacity-30 pointer-events-none' : ''}`}
-                      type="number" step="0.01"
-                      value={item.customer_supplied ? '' : item.garment_cost_per_piece}
-                      onChange={e => updateItem(idx, 'garment_cost_per_piece', e.target.value)}
-                      placeholder={item.customer_supplied ? 'supplied' : '0.00'}
-                      disabled={!!item.customer_supplied}
-                    />
-                  </div>
-                </div>
-
-                {/* Item cost summary */}
-                {(qty > 0 || ink > 0) && (
-                  <div className="flex gap-3 pt-1.5 border-t border-white/5 text-[10px] font-mono text-slate-500">
-                    <span>Garment: <span className="text-slate-400">${gmt.toFixed(2)}</span></span>
-                    <span>Labor: <span className="text-slate-400">${labor.toFixed(2)}</span></span>
-                    <span className="ml-auto font-semibold">Item total: <span className="text-green-400/80">${(gmt + ink + labor).toFixed(2)}</span></span>
+                {/* Item summary */}
+                {qty > 0 && (
+                  <div className="pt-1.5 border-t border-white/5">
+                    <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-center">
+                      <div className="rounded bg-black/20 p-1.5">
+                        <div className="text-slate-600 mb-0.5">My Cost</div>
+                        <div className="text-slate-400">${(myGmt + myInk).toFixed(2)}</div>
+                      </div>
+                      <div className="rounded bg-black/20 p-1.5">
+                        <div className="text-slate-600 mb-0.5">Client Charge</div>
+                        <div className="text-green-400/70">${(clientGmt + clientInk).toFixed(2)}</div>
+                      </div>
+                      <div className="rounded bg-black/20 p-1.5">
+                        <div className="text-slate-600 mb-0.5">Labor</div>
+                        <div className="text-slate-400">${labor.toFixed(2)}</div>
+                      </div>
+                    </div>
+                    <div className="text-right text-[10px] font-mono mt-1 text-slate-500">
+                      Item profit: <span className="text-green-400/80">${itemProfit.toFixed(2)}</span>
+                    </div>
                   </div>
                 )}
               </div>
@@ -428,10 +579,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
           <button type="button" onClick={pickOrderAssets} className="text-xs text-green-400 hover:text-green-300 transition-colors">+ Attach Files</button>
         </div>
         {pendingAssets.length === 0 ? (
-          <div
-            className="text-xs text-slate-500 py-2 text-center border border-dashed border-white/10 rounded-lg cursor-pointer hover:border-green-500/30 transition-colors"
-            onClick={pickOrderAssets}
-          >
+          <div className="text-xs text-slate-500 py-2 text-center border border-dashed border-white/10 rounded-lg cursor-pointer hover:border-green-500/30 transition-colors" onClick={pickOrderAssets}>
             Attach extra files — auto-saved to client assets
           </div>
         ) : (
@@ -452,23 +600,20 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
       </div>
 
       {/* Order totals */}
-      <div className="rounded-xl bg-[#181c2a] border border-white/5 p-3 space-y-1">
-        <div className="flex justify-between text-xs text-slate-500 pb-1 border-b border-white/5 mb-1">
+      <div className="rounded-xl bg-[#181c2a] border border-white/5 p-3 space-y-2">
+        <div className="flex justify-between text-xs text-slate-500 pb-1.5 border-b border-white/5">
           <span>{items.length} item{items.length !== 1 ? 's' : ''} · {totalQty} garments</span>
-          <span className="font-mono">Total Cost: ${totalCost.toFixed(2)}</span>
+          <span className="font-mono text-slate-400">Labor: ${totalLabor.toFixed(2)}</span>
         </div>
-        <div className="grid grid-cols-3 gap-2 text-[11px] font-mono text-center">
-          <div className="rounded-lg bg-black/20 p-2">
-            <div className="text-slate-500 mb-0.5">Garment</div>
-            <div className="text-slate-300">${totalGarment.toFixed(2)}</div>
+        <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
+          <div className="rounded-lg bg-black/20 p-2 text-center">
+            <div className="text-slate-500 mb-0.5">My Cost (garment + ink)</div>
+            <div className="text-slate-300">${myCost.toFixed(2)}</div>
           </div>
-          <div className="rounded-lg bg-black/20 p-2">
-            <div className="text-slate-500 mb-0.5">Ink</div>
-            <div className="text-slate-300">${totalInk.toFixed(2)}</div>
-          </div>
-          <div className="rounded-lg bg-black/20 p-2">
-            <div className="text-slate-500 mb-0.5">Labor</div>
-            <div className="text-slate-300">${totalLabor.toFixed(2)}</div>
+          <div className="rounded-lg bg-black/20 p-2 text-center">
+            <div className="text-green-500/60 mb-0.5">Suggested Sell</div>
+            <div className="text-green-400/80">${suggestedSell.toFixed(2)}</div>
+            <div className="text-[9px] text-slate-600 mt-0.5">client garment + ink</div>
           </div>
         </div>
       </div>
@@ -476,65 +621,55 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
       {/* Sell price */}
       <div>
         <label className="label">Sell Price ($)</label>
-        <input className="input" type="number" step="0.01" value={form.sell_price} onChange={e => set('sell_price', e.target.value)} placeholder="0.00" />
+        <input className="input" type="number" step="0.01" value={form.sell_price}
+          onChange={e => set('sell_price', e.target.value)} placeholder={`${suggestedSell.toFixed(2)} suggested`} />
         {form.sell_price && (
           <div className={`text-sm font-mono text-right mt-1.5 ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
             Profit: {profit >= 0 ? '+' : ''}${profit.toFixed(2)}
+            <span className="text-xs text-slate-500 ml-2">(includes ${totalLabor.toFixed(2)} labor)</span>
           </div>
         )}
       </div>
 
       {/* Internal profit splits */}
       <div className="rounded-xl bg-[#0d1117] border border-yellow-500/15 p-3 space-y-2.5">
-        <div className="flex items-center gap-2 mb-0.5">
+        <div className="flex items-center gap-2">
           <span className="text-[10px] font-semibold text-yellow-500/60 uppercase tracking-wider">Internal — Profit Splits</span>
           <span className="text-[9px] text-slate-600">not visible to clients</span>
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="label">Operator %</label>
-            <input
-              className="input text-xs py-1.5"
-              type="number" min="0" max="100" step="1"
+            <input className="input text-xs py-1.5" type="number" min="0" max="100" step="1"
               value={form.operator_split}
               onChange={e => {
                 const v = Math.min(100, Math.max(0, Number(e.target.value) || 0))
-                set('operator_split', String(v))
-                set('house_split', String(100 - v))
-              }}
-              placeholder="50"
-            />
+                set('operator_split', String(v)); set('house_split', String(100 - v))
+              }} placeholder="50" />
           </div>
           <div>
             <label className="label">House %</label>
-            <input
-              className="input text-xs py-1.5"
-              type="number" min="0" max="100" step="1"
+            <input className="input text-xs py-1.5" type="number" min="0" max="100" step="1"
               value={form.house_split}
               onChange={e => {
                 const v = Math.min(100, Math.max(0, Number(e.target.value) || 0))
-                set('house_split', String(v))
-                set('operator_split', String(100 - v))
-              }}
-              placeholder="50"
-            />
+                set('house_split', String(v)); set('operator_split', String(100 - v))
+              }} placeholder="50" />
           </div>
         </div>
-        {form.sell_price && profit !== 0 && (() => {
-          const opPct  = Number(form.operator_split) || 0
-          const hsPct  = Number(form.house_split) || 0
-          const opAmt  = profit * opPct / 100
-          const hsAmt  = profit * hsPct / 100
-          const color  = profit >= 0 ? 'text-green-400' : 'text-red-400'
+        {form.sell_price && (() => {
+          const opPct = Number(form.operator_split) || 0
+          const hsPct = Number(form.house_split) || 0
+          const color = profit >= 0 ? 'text-green-400' : 'text-red-400'
           return (
             <div className="grid grid-cols-2 gap-2 text-[11px] font-mono text-center pt-1 border-t border-white/5">
               <div className="rounded-lg bg-black/20 p-2">
                 <div className="text-slate-500 mb-0.5">Operator ({opPct}%)</div>
-                <div className={color}>{opAmt >= 0 ? '+' : ''}${opAmt.toFixed(2)}</div>
+                <div className={color}>{profit * opPct / 100 >= 0 ? '+' : ''}${(profit * opPct / 100).toFixed(2)}</div>
               </div>
               <div className="rounded-lg bg-black/20 p-2">
                 <div className="text-slate-500 mb-0.5">House ({hsPct}%)</div>
-                <div className={color}>{hsAmt >= 0 ? '+' : ''}${hsAmt.toFixed(2)}</div>
+                <div className={color}>{profit * hsPct / 100 >= 0 ? '+' : ''}${(profit * hsPct / 100).toFixed(2)}</div>
               </div>
             </div>
           )
@@ -555,14 +690,14 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel }) {
 }
 
 export default function Orders({ clientFilter, onClearFilter }) {
-  const [orders, setOrders]       = useState([])
-  const [clients, setClients]     = useState([])
+  const [orders, setOrders]         = useState([])
+  const [clients, setClients]       = useState([])
   const [printTypes, setPrintTypes] = useState([])
-  const [modal, setModal]         = useState(null)
-  const [deleting, setDeleting]   = useState(null)
+  const [modal, setModal]           = useState(null)
+  const [deleting, setDeleting]     = useState(null)
   const [statusFilter, setStatusFilter] = useState('all')
-  const [search, setSearch]       = useState('')
-  const [pdfing, setPdfing]       = useState(null)
+  const [search, setSearch]         = useState('')
+  const [pdfing, setPdfing]         = useState(null)
 
   const load = useCallback(() => {
     window.api.orders.list(clientFilter || undefined).then(setOrders)
@@ -587,21 +722,31 @@ export default function Orders({ clientFilter, onClearFilter }) {
     // Order-level extra assets
     for (const a of (pendingAssets || [])) {
       await window.api.assets.create({
-        client_id: order.client_id,
-        name: a.name,
-        file_path: a.file_path,
+        client_id: order.client_id, name: a.name, file_path: a.file_path,
         notes: `From order: ${order.title}`,
       })
     }
 
-    // Per-item art files (only newly attached)
+    // Per-item art files — save new ones and sync ink costs back to existing assets
     for (const item of (items || [])) {
       if (item.asset_path && item._asset_new) {
         await window.api.assets.create({
-          client_id: order.client_id,
-          name: item.asset_name || item.asset_path.split(/[\\/]/).pop(),
-          file_path: item.asset_path,
-          notes: `From order: ${order.title}`,
+          client_id:      order.client_id,
+          name:           item.asset_name || item.asset_path.split(/[\\/]/).pop(),
+          file_path:      item.asset_path,
+          notes:          `From order: ${order.title}`,
+          shirt_color:    item.shirt_color || '',
+          shirt_brand:    item.shirt_brand || '',
+          ink_costs:      item.ink_cost_breakdown || '',
+          work_file_path: item.work_file_path || '',
+        })
+      } else if (item.asset_path && !item._asset_new) {
+        // Sync latest ink costs back to the existing asset template
+        await window.api.assets.syncInkCosts({
+          file_path:   item.asset_path,
+          ink_costs:   item.ink_cost_breakdown || '',
+          shirt_color: item.shirt_color || '',
+          shirt_brand: item.shirt_brand || '',
         })
       }
     }
@@ -658,11 +803,8 @@ export default function Orders({ clientFilter, onClearFilter }) {
         </div>
         <div className="flex gap-1.5 flex-wrap">
           {['all', ...STATUSES.map(s => s.value)].map(s => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${statusFilter === s ? 'bg-green-600/25 text-green-300 border border-green-500/30' : 'bg-white/5 text-slate-400 hover:bg-white/10 border border-white/5'}`}
-            >
+            <button key={s} onClick={() => setStatusFilter(s)}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${statusFilter === s ? 'bg-green-600/25 text-green-300 border border-green-500/30' : 'bg-white/5 text-slate-400 hover:bg-white/10 border border-white/5'}`}>
               {s === 'all' ? 'All' : STATUSES.find(x => x.value === s)?.label}
             </button>
           ))}
@@ -679,8 +821,8 @@ export default function Orders({ clientFilter, onClearFilter }) {
         ) : (
           <div className="space-y-2">
             {filtered.map(o => {
-              const totalCost = o.garment_cost + o.ink_cost + (o.labor_cost || 0)
-              const profit = o.sell_price - totalCost
+              const myCost = (o.garment_cost || 0) + (o.ink_cost || 0)
+              const profit = o.sell_price - myCost
               return (
                 <div key={o.id} className="card p-4 hover:border-green-500/15 transition-colors animate-feed-item">
                   <div className="flex items-start justify-between gap-3">
@@ -693,9 +835,8 @@ export default function Orders({ clientFilter, onClearFilter }) {
                       <div className="text-xs text-slate-400">{o.client_name}</div>
                       <div className="text-xs text-slate-500 mt-0.5 font-mono">
                         {o.garment_qty ? `${o.garment_qty} pcs` : ''}
-                        {o.garment_qty && (o.ink_cost || o.labor_cost) ? ' · ' : ''}
-                        {o.ink_cost ? `ink $${o.ink_cost.toFixed(2)}` : ''}
-                        {o.labor_cost ? ` · labor $${o.labor_cost.toFixed(2)}` : ''}
+                        {o.garment_qty && o.labor_cost ? ' · ' : ''}
+                        {o.labor_cost ? `labor $${o.labor_cost.toFixed(2)}` : ''}
                       </div>
                       {o.due_date && <div className="text-xs text-slate-500 mt-0.5">Due: {o.due_date}</div>}
                     </div>
@@ -705,11 +846,8 @@ export default function Orders({ clientFilter, onClearFilter }) {
                         {profit >= 0 ? '+' : ''}${profit.toFixed(2)} profit
                       </div>
                       <div className="flex gap-1 mt-2 justify-end">
-                        <button
-                          onClick={() => handlePdf(o.id)}
-                          disabled={pdfing === o.id}
-                          className="text-xs px-2 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors border border-blue-500/10 disabled:opacity-40"
-                        >
+                        <button onClick={() => handlePdf(o.id)} disabled={pdfing === o.id}
+                          className="text-xs px-2 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors border border-blue-500/10 disabled:opacity-40">
                           {pdfing === o.id ? '…' : 'PDF'}
                         </button>
                         <button onClick={() => setModal(o)} className="text-xs px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 transition-colors border border-white/5">Edit</button>

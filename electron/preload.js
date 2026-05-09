@@ -44,11 +44,15 @@ contextBridge.exposeInMainWorld('api', {
 
   // Assets
   assets: {
-    list:   (cid) => invoke('assets:list', cid),
-    create: (d)   => invoke('assets:create', d),
-    update: (d)   => invoke('assets:update', d),
-    delete: (id)  => invoke('assets:delete', id),
+    list:         (cid) => invoke('assets:list', cid),
+    create:       (d)   => invoke('assets:create', d),
+    update:       (d)   => invoke('assets:update', d),
+    delete:       (id)  => invoke('assets:delete', id),
+    syncInkCosts: (d)   => invoke('assets:syncInkCosts', d),
   },
+
+  // Shell
+  openPath: (p) => invoke('shell:openPath', p),
 
   // Stats
   stats: { get: () => invoke('stats:get') },

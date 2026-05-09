@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron')
 const path = require('path')
 const fs = require('fs')
 
@@ -82,6 +82,9 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
+
+// ── Shell ─────────────────────────────────────────────────────────────────────
+ipcMain.handle('shell:openPath', (_, p) => shell.openPath(p))
 
 // ── Window controls ───────────────────────────────────────────────────────────
 ipcMain.on('win:minimize', () => win.minimize())
@@ -169,13 +172,15 @@ ipcMain.handle('orders:create', (_, data) => {
     shirt_color:       data.shirt_color || '',
     garment_qty:       Number(data.garment_qty) || 0,
     customer_supplied: data.customer_supplied ? 1 : 0,
-    garment_cost:      data.customer_supplied ? 0 : (Number(data.garment_cost) || 0),
-    ink_cost:          Number(data.ink_cost) || 0,
-    labor_cost:        Number(data.labor_cost) || 0,
-    sell_price:        Number(data.sell_price) || 0,
-    operator_split:    Number(data.operator_split) || 50,
-    house_split:       Number(data.house_split) || 50,
-    created_at:        now(),
+    garment_cost:        data.customer_supplied ? 0 : (Number(data.garment_cost) || 0),
+    client_garment_cost: Number(data.client_garment_cost) || 0,
+    ink_cost:            Number(data.ink_cost) || 0,
+    client_ink_cost:     Number(data.client_ink_cost) || 0,
+    labor_cost:          Number(data.labor_cost) || 0,
+    sell_price:          Number(data.sell_price) || 0,
+    operator_split:      Number(data.operator_split) || 50,
+    house_split:         Number(data.house_split) || 50,
+    created_at:          now(),
   }
   store.orders.push(order)
   save()
@@ -197,12 +202,14 @@ ipcMain.handle('orders:update', (_, data) => {
       shirt_color:       data.shirt_color || '',
       garment_qty:       Number(data.garment_qty) || 0,
       customer_supplied: data.customer_supplied ? 1 : 0,
-      garment_cost:      data.customer_supplied ? 0 : (Number(data.garment_cost) || 0),
-      ink_cost:          Number(data.ink_cost) || 0,
-      labor_cost:        Number(data.labor_cost) || 0,
-      sell_price:        Number(data.sell_price) || 0,
-      operator_split:    Number(data.operator_split) || 50,
-      house_split:       Number(data.house_split) || 50,
+      garment_cost:        data.customer_supplied ? 0 : (Number(data.garment_cost) || 0),
+      client_garment_cost: Number(data.client_garment_cost) || 0,
+      ink_cost:            Number(data.ink_cost) || 0,
+      client_ink_cost:     Number(data.client_ink_cost) || 0,
+      labor_cost:          Number(data.labor_cost) || 0,
+      sell_price:          Number(data.sell_price) || 0,
+      operator_split:      Number(data.operator_split) || 50,
+      house_split:         Number(data.house_split) || 50,
     }
     save()
   }
@@ -228,15 +235,18 @@ ipcMain.handle('orderItems:save', (_, { orderId, items }) => {
       description:            item.description || '',
       quantity:               Number(item.quantity) || 1,
       size_breakdown:         item.size_breakdown || '',
-      ink_cost_breakdown:     item.ink_cost_breakdown || '',
-      shirt_brand:            item.shirt_brand || '',
-      shirt_color:            item.shirt_color || '',
-      garment_cost_per_piece: Number(item.garment_cost_per_piece) || 0,
-      labor_base:             Number(item.labor_base) || 7,
-      prints_on_garment:      Number(item.prints_on_garment) || 1,
-      customer_supplied:      item.customer_supplied ? 1 : 0,
-      asset_path:             item.asset_path || '',
-      asset_name:             item.asset_name || '',
+      ink_cost_breakdown:        item.ink_cost_breakdown || '',
+      client_ink_breakdown:      item.client_ink_breakdown || '',
+      shirt_brand:               item.shirt_brand || '',
+      shirt_color:               item.shirt_color || '',
+      garment_cost_per_piece:    Number(item.garment_cost_per_piece) || 0,
+      client_garment_per_piece:  Number(item.client_garment_per_piece) || 0,
+      labor_base:                Number(item.labor_base) || 7,
+      prints_on_garment:         Number(item.prints_on_garment) || 1,
+      customer_supplied:         item.customer_supplied ? 1 : 0,
+      asset_path:                item.asset_path || '',
+      asset_name:                item.asset_name || '',
+      work_file_path:            item.work_file_path || '',
     })
   }
   save()
@@ -277,7 +287,18 @@ ipcMain.handle('assets:list', (_, clientId) => {
 })
 
 ipcMain.handle('assets:create', (_, data) => {
-  const asset = { id: nextId(store.assets), client_id: Number(data.client_id), name: data.name, file_path: data.file_path, notes: data.notes || '', created_at: now() }
+  const asset = {
+    id: nextId(store.assets),
+    client_id:      Number(data.client_id),
+    name:           data.name,
+    file_path:      data.file_path || '',
+    notes:          data.notes || '',
+    shirt_color:    data.shirt_color || '',
+    shirt_brand:    data.shirt_brand || '',
+    ink_costs:      data.ink_costs || '',
+    work_file_path: data.work_file_path || '',
+    created_at:     now(),
+  }
   store.assets.push(asset)
   save()
   return asset
@@ -285,8 +306,30 @@ ipcMain.handle('assets:create', (_, data) => {
 
 ipcMain.handle('assets:update', (_, data) => {
   const idx = store.assets.findIndex(a => a.id === data.id)
-  if (idx !== -1) { store.assets[idx] = { ...store.assets[idx], name: data.name, file_path: data.file_path, notes: data.notes || '' }; save() }
+  if (idx !== -1) {
+    store.assets[idx] = {
+      ...store.assets[idx],
+      name:           data.name,
+      file_path:      data.file_path || '',
+      notes:          data.notes || '',
+      shirt_color:    data.shirt_color ?? store.assets[idx].shirt_color ?? '',
+      shirt_brand:    data.shirt_brand ?? store.assets[idx].shirt_brand ?? '',
+      ink_costs:      data.ink_costs ?? store.assets[idx].ink_costs ?? '',
+      work_file_path: data.work_file_path ?? store.assets[idx].work_file_path ?? '',
+    }
+    save()
+  }
   return store.assets[idx]
+})
+
+ipcMain.handle('assets:syncInkCosts', (_, { file_path, ink_costs, shirt_color, shirt_brand }) => {
+  const idx = store.assets.findIndex(a => a.file_path === file_path)
+  if (idx !== -1) {
+    store.assets[idx] = { ...store.assets[idx], ink_costs, shirt_color: shirt_color || store.assets[idx].shirt_color, shirt_brand: shirt_brand || store.assets[idx].shirt_brand }
+    save()
+    return { ok: true, updated: true }
+  }
+  return { ok: true, updated: false }
 })
 
 ipcMain.handle('assets:delete', (_, id) => {
@@ -300,7 +343,7 @@ ipcMain.handle('stats:get', () => {
   const billed      = store.orders.filter(o => ['shipped', 'invoiced'].includes(o.status))
   const active      = store.orders.filter(o => !['shipped', 'invoiced'].includes(o.status))
   const revenue     = billed.reduce((s, o) => s + o.sell_price, 0)
-  const costs       = billed.reduce((s, o) => s + o.garment_cost + o.ink_cost + (o.labor_cost || 0), 0)
+  const costs       = billed.reduce((s, o) => s + o.garment_cost + o.ink_cost, 0)
   const rushOrders  = active.filter(o => o.is_rush === 1).length
   const clientMap   = Object.fromEntries(store.clients.map(c => [c.id, c.name]))
   const recentOrders = [...store.orders]
@@ -331,20 +374,34 @@ function generateInvoiceHTML(order, items) {
       const parts = SIZES.filter(k => Number(s[k]) > 0).map(k => `<span>${k}:&nbsp;<b>${s[k]}</b></span>`).join(' ')
       if (parts) sizesHtml = parts
     } catch (_) {}
+
+    // Client-facing price: sum of client ink + client garment per item
+    let clientCharge = 0
+    const qty = Number(item.quantity) || 0
+    try {
+      const clientInk = JSON.parse(item.client_ink_breakdown || '{}')
+      const sizes = JSON.parse(item.size_breakdown || '{}')
+      clientCharge += SIZES.reduce((s, k) => s + (Number(sizes[k]) || 0) * (Number(clientInk[k]) || 0), 0)
+    } catch (_) {}
+    clientCharge += (Number(item.client_garment_per_piece) || 0) * qty
+
     const garment = [item.shirt_brand, item.shirt_color ? `(${item.shirt_color})` : ''].filter(Boolean).join(' ')
     const print   = [item.description, item.print_type_name].filter(Boolean).join(' — ')
+    const priceCell = clientCharge > 0 ? `$${clientCharge.toFixed(2)}` : '—'
+
     return `<tr class="${i % 2 === 1 ? 'alt' : ''}">
       <td class="c">${i + 1}</td>
       <td>${garment || '—'}</td>
       <td>${print || '—'}</td>
       <td class="sz">${sizesHtml}</td>
       <td class="c">${item.quantity}</td>
+      <td class="c">${priceCell}</td>
     </tr>`
   }).join('')
 
   const priceRow = order.sell_price > 0 ? `
     <tr class="price-row">
-      <td colspan="4" style="text-align:right;padding-right:12px"><b>Total Price</b></td>
+      <td colspan="5" style="text-align:right;padding-right:12px"><b>Total</b></td>
       <td class="c"><b>$${Number(order.sell_price).toFixed(2)}</b></td>
     </tr>` : ''
 
@@ -401,11 +458,12 @@ tr.price-row td{border-top:2px solid #22c55e;border-bottom:none;padding-top:10px
   <div class="label">Line Items</div>
   <table>
     <thead><tr>
-      <th class="c" style="width:36px">#</th>
-      <th style="width:22%">Garment</th>
+      <th class="c" style="width:32px">#</th>
+      <th style="width:20%">Garment</th>
       <th>Print</th>
-      <th style="width:32%">Sizes</th>
-      <th class="c" style="width:50px">Qty</th>
+      <th style="width:28%">Sizes</th>
+      <th class="c" style="width:44px">Qty</th>
+      <th class="c" style="width:60px">Price</th>
     </tr></thead>
     <tbody>${itemRows}${priceRow}</tbody>
   </table>
