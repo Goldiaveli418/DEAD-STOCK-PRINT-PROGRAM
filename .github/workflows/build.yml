@@ -22,9 +22,6 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Generate logo.png icon
-        run: magick -size 512x512 xc:'#22c55e' -fill white -font Helvetica -pointsize 160 -gravity center -annotate 0 'PF' logo.png
-
       - name: Build React app (Vite)
         run: npx vite build
 
@@ -54,11 +51,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Generate logo.png and logo.ico icons
+      - name: Convert logo.png to logo.ico
         shell: bash
-        run: |
-          magick -size 512x512 xc:'#22c55e' -fill white -font Arial -pointsize 160 -gravity center -annotate 0 'PF' logo.png
-          magick logo.png -resize 256x256 logo.ico
+        run: magick logo.png -resize 256x256 logo.ico
 
       - name: Build React app (Vite)
         run: npx vite build
