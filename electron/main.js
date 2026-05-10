@@ -186,8 +186,8 @@ ipcMain.handle('orders:create', (_, data) => {
     client_ink_cost:     Number(data.client_ink_cost) || 0,
     labor_cost:          Number(data.labor_cost) || 0,
     sell_price:          Number(data.sell_price) || 0,
-    operator_split:      Number(data.operator_split) || 50,
-    house_split:         Number(data.house_split) || 50,
+    operator_split:      data.operator_split != null ? Number(data.operator_split) : 50,
+    house_split:         data.operator_split != null ? 100 - Number(data.operator_split) : 50,
     created_at:          now(),
   }
   store.orders.push(order)
@@ -217,8 +217,8 @@ ipcMain.handle('orders:update', (_, data) => {
       client_ink_cost:     Number(data.client_ink_cost) || 0,
       labor_cost:          Number(data.labor_cost) || 0,
       sell_price:          Number(data.sell_price) || 0,
-      operator_split:      Number(data.operator_split) || 50,
-      house_split:         Number(data.house_split) || 50,
+      operator_split:      data.operator_split != null ? Number(data.operator_split) : 50,
+      house_split:         data.operator_split != null ? 100 - Number(data.operator_split) : 50,
     }
     // Auto-deduct inventory when status changes to 'printing'
     if (data.status === 'printing' && prevStatus !== 'printing' && !store.orders[idx].inventory_deducted) {
@@ -648,7 +648,7 @@ ipcMain.handle('reports:get', (_, { from, to } = {}) => {
   const garmentCost = billed.reduce((s, o) => s + (o.garment_cost || 0), 0)
   const inkCost     = billed.reduce((s, o) => s + (o.ink_cost || 0), 0)
   const laborCost   = billed.reduce((s, o) => s + (o.labor_cost || 0), 0)
-  const totalCost   = garmentCost + inkCost + laborCost
+  const totalCost   = garmentCost + inkCost          // labor is operator earnings, not a cost
   const profit      = revenue - totalCost
   const margin      = revenue > 0 ? (profit / revenue) * 100 : 0
 
@@ -685,10 +685,10 @@ ipcMain.handle('reports:get', (_, { from, to } = {}) => {
   const rushOrders  = all.filter(o => o.is_rush).length
   const rushRevenue = billed.filter(o => o.is_rush).reduce((s, o) => s + (o.sell_price || 0), 0)
 
-  // Splits
+  // Splits — profit = revenue - garment - ink (labor is operator earnings, not deducted)
   let operatorEarnings = 0, houseEarnings = 0
   for (const o of billed) {
-    const p = (o.sell_price || 0) - (o.garment_cost || 0) - (o.ink_cost || 0) - (o.labor_cost || 0)
+    const p = (o.sell_price || 0) - (o.garment_cost || 0) - (o.ink_cost || 0)
     operatorEarnings += p * ((o.operator_split ?? 50) / 100)
     houseEarnings    += p * ((o.house_split    ?? 50) / 100)
   }
@@ -738,7 +738,7 @@ ipcMain.handle('reports:get', (_, { from, to } = {}) => {
       d.garmentCost += o.garment_cost || 0
       d.inkCost     += o.ink_cost || 0
       d.laborCost   += o.labor_cost || 0
-      d.profit      += (o.sell_price || 0) - (o.garment_cost || 0) - (o.ink_cost || 0) - (o.labor_cost || 0)
+      d.profit      += (o.sell_price || 0) - (o.garment_cost || 0) - (o.ink_cost || 0)
       if (o.status === 'invoiced' && o.paid) d.paidOrders++
       if (o.status === 'invoiced' && !o.paid) d.outstanding += o.sell_price || 0
     }
@@ -766,7 +766,7 @@ ipcMain.handle('reports:get', (_, { from, to } = {}) => {
       garment_cost: o.garment_cost || 0,
       ink_cost: o.ink_cost || 0,
       labor_cost: o.labor_cost || 0,
-      profit: (o.sell_price || 0) - (o.garment_cost || 0) - (o.ink_cost || 0) - (o.labor_cost || 0),
+      profit: (o.sell_price || 0) - (o.garment_cost || 0) - (o.ink_cost || 0),
       due_date: o.due_date, created_at: o.created_at,
     }))
 

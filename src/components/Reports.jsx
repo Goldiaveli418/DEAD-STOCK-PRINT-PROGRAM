@@ -272,13 +272,13 @@ export default function Reports() {
                   { label: 'Category', key: 'label' },
                   { label: 'Amount', right: true, render: r => `$${fmt(r.val)}` },
                   { label: '% of Revenue', right: true, cls: 'text-slate-500', render: r => data.revenue > 0 ? fmtPct((r.val / data.revenue) * 100) : '—' },
-                  { label: '% of Cost', right: true, cls: 'text-slate-500', render: r => data.totalCost > 0 ? fmtPct((r.val / data.totalCost) * 100) : '—' },
                 ]}
                 rows={[
                   { label: 'Garment / Blanks', val: data.garmentCost },
                   { label: 'Ink',              val: data.inkCost },
-                  { label: 'Labor',            val: data.laborCost },
-                  { label: 'Total Costs',      val: data.totalCost },
+                  { label: 'Total Hard Costs', val: data.totalCost },
+                  { label: 'Labor (operator earnings — not a cost)', val: data.laborCost },
+                  { label: 'Profit',           val: data.profit },
                 ]}
               />
             </Section>
