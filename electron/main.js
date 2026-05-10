@@ -637,11 +637,43 @@ ipcMain.handle('reports:get', (_, { from, to } = {}) => {
     return true
   }
 
-  const all      = store.orders.filter(inRange)
-  const billed   = all.filter(o => ['done', 'shipped', 'invoiced'].includes(o.status))
-  const active   = all.filter(o => !['done', 'shipped', 'invoiced'].includes(o.status))
   const clientMap = Object.fromEntries(store.clients.map(c => [c.id, c.name]))
   const ptMap     = Object.fromEntries(store.printTypes.map(p => [p.id, p.name]))
+
+  // Date-range filtered orders (for financial history stats)
+  const all      = store.orders.filter(inRange)
+  const billed   = all.filter(o => ['done', 'shipped', 'invoiced'].includes(o.status))
+
+  // Current pipeline — ALL active orders regardless of date (operational view)
+  const ACTIVE_STATUSES = ['new', 'art', 'printing']
+  const currentPipelineOrders = store.orders
+    .filter(o => ACTIVE_STATUSES.includes(o.status))
+    .sort((a, b) => {
+      if (a.due_date && b.due_date) return a.due_date.localeCompare(b.due_date)
+      if (a.due_date) return -1
+      if (b.due_date) return 1
+      return (b.created_at || '').localeCompare(a.created_at || '')
+    })
+    .map(o => ({
+      id: o.id, title: o.title,
+      client_name: clientMap[o.client_id] || '',
+      invoice_number: o.invoice_number,
+      status: o.status, is_rush: o.is_rush,
+      sell_price: o.sell_price || 0,
+      garment_qty: o.garment_qty || 0,
+      due_date: o.due_date, created_at: o.created_at,
+    }))
+
+  const pipelineByStatus = {}
+  for (const o of currentPipelineOrders) {
+    if (!pipelineByStatus[o.status]) pipelineByStatus[o.status] = { count: 0, value: 0, pieces: 0, orders: [] }
+    pipelineByStatus[o.status].count++
+    pipelineByStatus[o.status].value  += o.sell_price
+    pipelineByStatus[o.status].pieces += o.garment_qty
+    pipelineByStatus[o.status].orders.push(o)
+  }
+  const pipelineValue = currentPipelineOrders.reduce((s, o) => s + o.sell_price, 0)
+  const pipelinePieces = currentPipelineOrders.reduce((s, o) => s + o.garment_qty, 0)
 
   // Revenue & costs
   const revenue     = billed.reduce((s, o) => s + (o.sell_price || 0), 0)
@@ -666,8 +698,7 @@ ipcMain.handle('reports:get', (_, { from, to } = {}) => {
     } catch (_) {}
   }
 
-  // Pipeline & outstanding
-  const pipelineValue = active.reduce((s, o) => s + (o.sell_price || 0), 0)
+  // Outstanding
   const outstanding   = store.orders
     .filter(o => o.status === 'invoiced' && !o.paid)
     .reduce((s, o) => s + (o.sell_price || 0), 0)
@@ -774,12 +805,13 @@ ipcMain.handle('reports:get', (_, { from, to } = {}) => {
     revenue, garmentCost, inkCost, laborCost, totalCost, profit, margin,
     totalOrders: all.length,
     billedOrders: billed.length,
-    activeOrders: active.length,
+    activeOrders: currentPipelineOrders.length,
     paidOrders: paidOrders.length,
     paidRevenue,
     totalPieces, billedPieces,
     totalPrintLocations,
-    pipelineValue,
+    pipelineValue, pipelinePieces,
+    pipelineByStatus, currentPipelineOrders,
     outstanding,
     allOutstanding: allOutstanding.map(o => ({
       id: o.id, title: o.title,

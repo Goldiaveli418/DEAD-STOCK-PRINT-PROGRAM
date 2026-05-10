@@ -242,11 +242,95 @@ export default function Reports() {
 
         {!loading && data && (
           <>
-            {/* ── Top money stats ── */}
+            {/* ── Live Pipeline (always shows current state, ignores date filter) ── */}
+            <Section title="Current Pipeline — All Active Orders">
+              {data.currentPipelineOrders?.length === 0 ? (
+                <div className="rounded-xl border border-white/5 bg-[#0e1018] px-4 py-6 text-center text-slate-600 text-sm">No active orders right now</div>
+              ) : (
+                <div className="space-y-3">
+                  {/* Summary chips */}
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { key: 'new',      label: 'New',      color: 'border-slate-500/30 bg-slate-500/10 text-slate-300' },
+                      { key: 'art',      label: 'Art Review', color: 'border-blue-500/30 bg-blue-500/10 text-blue-300' },
+                      { key: 'printing', label: 'Printing',  color: 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300' },
+                    ].map(({ key, label, color }) => {
+                      const s = data.pipelineByStatus?.[key]
+                      if (!s) return null
+                      return (
+                        <div key={key} className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${color}`}>
+                          <span className="text-xl font-bold font-mono">{s.count}</span>
+                          <div>
+                            <div className="text-[11px] font-semibold">{label}</div>
+                            <div className="text-[10px] opacity-70">{fmtN(s.pieces)} pcs · ${fmt(s.value)}</div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-white/8 bg-white/3 text-slate-300 ml-auto">
+                      <div className="text-right">
+                        <div className="text-xs text-slate-500">Total pipeline</div>
+                        <div className="text-sm font-mono font-bold text-blue-300">${fmt(data.pipelineValue)}</div>
+                        <div className="text-[10px] text-slate-600">{fmtN(data.pipelinePieces)} pcs · {data.activeOrders} orders</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Order list */}
+                  <div className="rounded-xl border border-white/5 bg-[#0e1018] overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-white/5">
+                          <th className="px-4 py-2 text-left text-slate-600 font-semibold">Order</th>
+                          <th className="px-4 py-2 text-left text-slate-600 font-semibold">Client</th>
+                          <th className="px-4 py-2 text-left text-slate-600 font-semibold">Status</th>
+                          <th className="px-4 py-2 text-right text-slate-600 font-semibold">Pcs</th>
+                          <th className="px-4 py-2 text-right text-slate-600 font-semibold">Value</th>
+                          <th className="px-4 py-2 text-right text-slate-600 font-semibold">Due</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.currentPipelineOrders.map(o => {
+                          const todayMs = new Date().setHours(0,0,0,0)
+                          const diffDays = o.due_date ? Math.round((new Date(o.due_date) - todayMs) / 86400000) : null
+                          const dueCls = diffDays != null && diffDays < 0 ? 'text-red-400' : diffDays === 0 ? 'text-red-400' : diffDays <= 2 ? 'text-yellow-400' : 'text-slate-500'
+                          return (
+                            <tr key={o.id} className="border-b border-white/5 last:border-0 hover:bg-white/3 transition-colors">
+                              <td className="px-4 py-2.5 font-medium text-slate-200 max-w-[180px]">
+                                <div className="flex items-center gap-1.5">
+                                  {o.is_rush === 1 && <span className="text-red-400 text-[10px]">⚡</span>}
+                                  <span className="truncate">{o.title}</span>
+                                </div>
+                                {o.invoice_number && <div className="text-[10px] text-slate-600 font-mono">{o.invoice_number}</div>}
+                              </td>
+                              <td className="px-4 py-2.5 text-slate-400">{o.client_name}</td>
+                              <td className="px-4 py-2.5">
+                                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${
+                                  o.status === 'new'      ? 'text-slate-300 bg-slate-500/10 border-slate-500/30' :
+                                  o.status === 'art'      ? 'text-blue-300 bg-blue-500/10 border-blue-500/30' :
+                                  'text-yellow-300 bg-yellow-500/10 border-yellow-500/30'
+                                }`}>{STATUS_LABELS[o.status]}</span>
+                              </td>
+                              <td className="px-4 py-2.5 text-right font-mono text-slate-300">{o.garment_qty || '—'}</td>
+                              <td className="px-4 py-2.5 text-right font-mono text-slate-300">{o.sell_price > 0 ? `$${fmt(o.sell_price)}` : '—'}</td>
+                              <td className={`px-4 py-2.5 text-right font-mono ${dueCls}`}>
+                                {diffDays == null ? '—' : diffDays < 0 ? `${Math.abs(diffDays)}d over` : diffDays === 0 ? 'Today' : `${diffDays}d`}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </Section>
+
+            {/* ── Top money stats (date-range filtered) ── */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               <Stat label="Revenue" prefix="$" value={fmt(data.revenue)} sub={`${data.billedOrders} completed orders`} color="text-green-300" />
               <Stat label="Profit"  prefix="$" value={fmt(data.profit)}  sub={`${fmtPct(data.margin)} margin`} color={data.profit >= 0 ? 'text-white' : 'text-red-400'} />
-              <Stat label="Pipeline" prefix="$" value={fmt(data.pipelineValue)} sub={`${data.activeOrders} active orders`} color="text-blue-300" />
+              <Stat label="Paid Revenue" prefix="$" value={fmt(data.paidRevenue)} sub={`${data.paidOrders} paid invoices`} color="text-green-400" />
               <Stat label="Outstanding" prefix="$" value={fmt(data.outstanding)} sub="invoiced, unpaid" color={data.outstanding > 0 ? 'text-yellow-300' : 'text-slate-500'} />
             </div>
 
