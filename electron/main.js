@@ -629,51 +629,168 @@ ipcMain.handle('search:all', (_, query) => {
 
 // ── Reports ───────────────────────────────────────────────────────────────────
 ipcMain.handle('reports:get', (_, { from, to } = {}) => {
+  const toDate = s => s ? s.slice(0, 10) : null
   const inRange = o => {
-    if (from && o.created_at < from) return false
-    if (to   && o.created_at > to)   return false
+    const d = toDate(o.created_at)
+    if (from && d < from) return false
+    if (to   && d > to)   return false
     return true
   }
-  const all    = store.orders.filter(inRange)
-  const billed = all.filter(o => ['shipped', 'invoiced'].includes(o.status))
+
+  const all      = store.orders.filter(inRange)
+  const billed   = all.filter(o => ['done', 'shipped', 'invoiced'].includes(o.status))
+  const active   = all.filter(o => !['done', 'shipped', 'invoiced'].includes(o.status))
   const clientMap = Object.fromEntries(store.clients.map(c => [c.id, c.name]))
+  const ptMap     = Object.fromEntries(store.printTypes.map(p => [p.id, p.name]))
 
-  const revenue      = billed.reduce((s, o) => s + (o.sell_price || 0), 0)
-  const garmentCost  = billed.reduce((s, o) => s + (o.garment_cost || 0), 0)
-  const inkCost      = billed.reduce((s, o) => s + (o.ink_cost || 0), 0)
-  const laborCost    = billed.reduce((s, o) => s + (o.labor_cost || 0), 0)
-  const profit       = revenue - garmentCost - inkCost
+  // Revenue & costs
+  const revenue     = billed.reduce((s, o) => s + (o.sell_price || 0), 0)
+  const garmentCost = billed.reduce((s, o) => s + (o.garment_cost || 0), 0)
+  const inkCost     = billed.reduce((s, o) => s + (o.ink_cost || 0), 0)
+  const laborCost   = billed.reduce((s, o) => s + (o.labor_cost || 0), 0)
+  const totalCost   = garmentCost + inkCost + laborCost
+  const profit      = revenue - totalCost
+  const margin      = revenue > 0 ? (profit / revenue) * 100 : 0
 
+  // Pieces
+  const totalPieces  = all.reduce((s, o) => s + (o.garment_qty || 0), 0)
+  const billedPieces = billed.reduce((s, o) => s + (o.garment_qty || 0), 0)
+
+  // Print locations
+  const allItems = store.orderItems.filter(i => all.some(o => o.id === i.order_id))
+  let totalPrintLocations = 0
+  for (const item of allItems) {
+    try {
+      const a = JSON.parse(item.item_assets || '[]')
+      totalPrintLocations += Array.isArray(a) ? a.length : 0
+    } catch (_) {}
+  }
+
+  // Pipeline & outstanding
+  const pipelineValue = active.reduce((s, o) => s + (o.sell_price || 0), 0)
+  const outstanding   = store.orders
+    .filter(o => o.status === 'invoiced' && !o.paid)
+    .reduce((s, o) => s + (o.sell_price || 0), 0)
+  const allOutstanding = store.orders.filter(o => o.status === 'invoiced' && !o.paid)
+
+  // Paid
+  const paidOrders = billed.filter(o => o.status === 'invoiced' && o.paid)
+  const paidRevenue = paidOrders.reduce((s, o) => s + (o.sell_price || 0), 0)
+
+  // Averages
+  const avgOrderValue    = billed.length > 0 ? revenue / billed.length : 0
+  const avgPiecesPerOrder = billed.length > 0 ? billedPieces / billed.length : 0
+
+  // Rush
+  const rushOrders  = all.filter(o => o.is_rush).length
+  const rushRevenue = billed.filter(o => o.is_rush).reduce((s, o) => s + (o.sell_price || 0), 0)
+
+  // Splits
   let operatorEarnings = 0, houseEarnings = 0
   for (const o of billed) {
-    const p = (o.sell_price || 0) - (o.garment_cost || 0) - (o.ink_cost || 0)
-    operatorEarnings += p * (o.operator_split || 50) / 100
-    houseEarnings    += p * (o.house_split    || 50) / 100
+    const p = (o.sell_price || 0) - (o.garment_cost || 0) - (o.ink_cost || 0) - (o.labor_cost || 0)
+    operatorEarnings += p * ((o.operator_split ?? 50) / 100)
+    houseEarnings    += p * ((o.house_split    ?? 50) / 100)
   }
 
-  const clientTotals = {}
-  for (const o of billed) {
-    const name = clientMap[o.client_id] || 'Unknown'
-    if (!clientTotals[name]) clientTotals[name] = { revenue: 0, cost: 0, orders: 0, profit: 0 }
-    const cost = (o.garment_cost || 0) + (o.ink_cost || 0)
-    clientTotals[name].revenue += o.sell_price || 0
-    clientTotals[name].cost    += cost
-    clientTotals[name].profit  += (o.sell_price || 0) - cost
-    clientTotals[name].orders  += 1
-  }
-
+  // By status
   const byStatus = {}
   for (const o of all) byStatus[o.status] = (byStatus[o.status] || 0) + 1
 
+  // By print type
+  const ptCounts = {}
+  for (const item of allItems) {
+    const name = ptMap[item.print_type_id] || 'Unknown'
+    if (!ptCounts[name]) ptCounts[name] = { name, count: 0, pieces: 0 }
+    ptCounts[name].count++
+    ptCounts[name].pieces += Number(item.quantity) || 0
+  }
+  const byPrintType = Object.values(ptCounts).sort((a, b) => b.pieces - a.pieces)
+
+  // By day
+  const dayMap = {}
+  for (const o of all) {
+    const d = toDate(o.created_at)
+    if (!dayMap[d]) dayMap[d] = { date: d, orders: 0, revenue: 0, pieces: 0 }
+    dayMap[d].orders++
+    if (['done','shipped','invoiced'].includes(o.status)) dayMap[d].revenue += o.sell_price || 0
+    dayMap[d].pieces += o.garment_qty || 0
+  }
+  const byDay = Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date))
+
+  // By client
+  const clientData = {}
+  for (const o of all) {
+    const name = clientMap[o.client_id] || 'Unknown'
+    const cid  = o.client_id
+    if (!clientData[cid]) clientData[cid] = {
+      name, clientId: cid,
+      orderCount: 0, billedOrders: 0, revenue: 0,
+      garmentCost: 0, inkCost: 0, laborCost: 0, profit: 0,
+      pieces: 0, paidOrders: 0, outstanding: 0, orders: [],
+    }
+    const d = clientData[cid]
+    d.orderCount++
+    d.pieces += o.garment_qty || 0
+    if (['done','shipped','invoiced'].includes(o.status)) {
+      d.billedOrders++
+      d.revenue     += o.sell_price || 0
+      d.garmentCost += o.garment_cost || 0
+      d.inkCost     += o.ink_cost || 0
+      d.laborCost   += o.labor_cost || 0
+      d.profit      += (o.sell_price || 0) - (o.garment_cost || 0) - (o.ink_cost || 0) - (o.labor_cost || 0)
+      if (o.status === 'invoiced' && o.paid) d.paidOrders++
+      if (o.status === 'invoiced' && !o.paid) d.outstanding += o.sell_price || 0
+    }
+    d.orders.push({
+      id: o.id, title: o.title, invoice_number: o.invoice_number,
+      status: o.status, paid: o.paid,
+      sell_price: o.sell_price || 0, garment_qty: o.garment_qty || 0,
+      due_date: o.due_date, is_rush: o.is_rush, created_at: o.created_at,
+    })
+  }
+  const byClient = Object.values(clientData)
+    .sort((a, b) => b.revenue - a.revenue)
+
+  // Completed orders list
+  const completedOrders = billed
+    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+    .slice(0, 50)
+    .map(o => ({
+      id: o.id, title: o.title,
+      client_name: clientMap[o.client_id] || '',
+      invoice_number: o.invoice_number,
+      status: o.status, paid: o.paid,
+      sell_price: o.sell_price || 0,
+      garment_qty: o.garment_qty || 0,
+      garment_cost: o.garment_cost || 0,
+      ink_cost: o.ink_cost || 0,
+      labor_cost: o.labor_cost || 0,
+      profit: (o.sell_price || 0) - (o.garment_cost || 0) - (o.ink_cost || 0) - (o.labor_cost || 0),
+      due_date: o.due_date, created_at: o.created_at,
+    }))
+
   return {
-    revenue, garmentCost, inkCost, laborCost, profit,
-    operatorEarnings, houseEarnings,
+    revenue, garmentCost, inkCost, laborCost, totalCost, profit, margin,
     totalOrders: all.length,
     billedOrders: billed.length,
-    byClient: Object.entries(clientTotals)
-      .map(([name, d]) => ({ name, ...d }))
-      .sort((a, b) => b.revenue - a.revenue),
-    byStatus,
+    activeOrders: active.length,
+    paidOrders: paidOrders.length,
+    paidRevenue,
+    totalPieces, billedPieces,
+    totalPrintLocations,
+    pipelineValue,
+    outstanding,
+    allOutstanding: allOutstanding.map(o => ({
+      id: o.id, title: o.title,
+      client_name: clientMap[o.client_id] || '',
+      invoice_number: o.invoice_number,
+      sell_price: o.sell_price || 0,
+    })),
+    avgOrderValue, avgPiecesPerOrder,
+    rushOrders, rushRevenue,
+    operatorEarnings, houseEarnings,
+    byStatus, byPrintType, byDay, byClient, completedOrders,
   }
 })
 
