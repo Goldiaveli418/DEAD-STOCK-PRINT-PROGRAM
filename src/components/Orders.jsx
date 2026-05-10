@@ -936,6 +936,11 @@ export default function Orders({ clientFilter, onClearFilter }) {
     load()
   }
 
+  async function handleQuickStatus(order, status) {
+    await window.api.orders.update({ ...order, status })
+    load()
+  }
+
   function getDueBadge(dueDate, status) {
     if (!dueDate || ['shipped', 'invoiced'].includes(status)) return null
     const todayMs  = new Date().setHours(0, 0, 0, 0)
@@ -1040,6 +1045,14 @@ export default function Orders({ clientFilter, onClearFilter }) {
                           className="text-xs px-2 py-0.5 rounded bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 transition-colors border border-purple-500/10">
                           Text
                         </button>
+                        {['done', 'shipped'].includes(o.status) && (
+                          <button
+                            onClick={() => handleQuickStatus(o, 'invoiced')}
+                            className="text-xs px-2 py-0.5 rounded bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 transition-colors border border-purple-500/15"
+                          >
+                            Invoice
+                          </button>
+                        )}
                         {o.status === 'invoiced' && (
                           <button
                             onClick={() => handleSetPaid(o.id, !o.paid)}

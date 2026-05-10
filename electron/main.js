@@ -291,16 +291,19 @@ ipcMain.handle('orders:setPaid', (_, { id, paid }) => {
 
 // ── Order items ───────────────────────────────────────────────────────────────
 ipcMain.handle('orderItems:save', (_, { orderId, items }) => {
+  const existing = store.orderItems.filter(i => i.order_id === orderId)
+  const existingById = Object.fromEntries(existing.map(i => [i.id, i]))
   store.orderItems = store.orderItems.filter(i => i.order_id !== orderId)
-  let id = nextId(store.orderItems)
+  let nextItemId = nextId(store.orderItems)
   for (const item of items) {
+    const prev = item.id ? existingById[item.id] : null
     store.orderItems.push({
-      id: id++,
-      order_id:               orderId,
-      print_type_id:          item.print_type_id ? Number(item.print_type_id) : null,
-      description:            item.description || '',
-      quantity:               Number(item.quantity) || 1,
-      size_breakdown:         item.size_breakdown || '',
+      id:                        item.id || nextItemId++,
+      order_id:                  orderId,
+      print_type_id:             item.print_type_id ? Number(item.print_type_id) : null,
+      description:               item.description || '',
+      quantity:                  Number(item.quantity) || 1,
+      size_breakdown:            item.size_breakdown || '',
       ink_cost_breakdown:        item.ink_cost_breakdown || '',
       client_ink_breakdown:      item.client_ink_breakdown || '',
       shirt_brand:               item.shirt_brand || '',
@@ -314,6 +317,8 @@ ipcMain.handle('orderItems:save', (_, { orderId, items }) => {
       asset_name:                item.asset_name || '',
       item_assets:               item.item_assets || '',
       work_file_path:            item.work_file_path || '',
+      completed:                 prev ? prev.completed : 0,
+      production_notes:          prev ? prev.production_notes : '',
     })
   }
   save()
@@ -483,8 +488,25 @@ ipcMain.handle('assets:list', (_, clientId) => {
 })
 
 ipcMain.handle('assets:create', (_, data) => {
+  // Deduplicate: if same file_path already exists for this client, update instead
+  if (data.file_path) {
+    const idx = store.assets.findIndex(a => a.file_path === data.file_path && a.client_id === Number(data.client_id))
+    if (idx !== -1) {
+      store.assets[idx] = {
+        ...store.assets[idx],
+        name:           data.name || store.assets[idx].name,
+        notes:          data.notes || store.assets[idx].notes,
+        shirt_color:    data.shirt_color || store.assets[idx].shirt_color,
+        shirt_brand:    data.shirt_brand || store.assets[idx].shirt_brand,
+        ink_costs:      data.ink_costs || store.assets[idx].ink_costs,
+        work_file_path: data.work_file_path || store.assets[idx].work_file_path,
+      }
+      save()
+      return store.assets[idx]
+    }
+  }
   const asset = {
-    id: nextId(store.assets),
+    id:             nextId(store.assets),
     client_id:      Number(data.client_id),
     name:           data.name,
     file_path:      data.file_path || '',
@@ -536,10 +558,10 @@ ipcMain.handle('assets:delete', (_, id) => {
 
 // ── Dashboard stats ───────────────────────────────────────────────────────────
 ipcMain.handle('stats:get', () => {
-  const billed      = store.orders.filter(o => ['shipped', 'invoiced'].includes(o.status))
-  const active      = store.orders.filter(o => !['shipped', 'invoiced'].includes(o.status))
-  const revenue     = billed.reduce((s, o) => s + o.sell_price, 0)
-  const costs       = billed.reduce((s, o) => s + o.garment_cost + o.ink_cost, 0)
+  const billed      = store.orders.filter(o => ['done', 'shipped', 'invoiced'].includes(o.status))
+  const active      = store.orders.filter(o => !['done', 'shipped', 'invoiced'].includes(o.status))
+  const revenue     = billed.reduce((s, o) => s + (o.sell_price || 0), 0)
+  const costs       = billed.reduce((s, o) => s + (o.garment_cost || 0) + (o.ink_cost || 0), 0)
   const rushOrders  = active.filter(o => o.is_rush === 1).length
   const clientMap   = Object.fromEntries(store.clients.map(c => [c.id, c.name]))
   const recentOrders = [...store.orders]
