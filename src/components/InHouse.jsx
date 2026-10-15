@@ -19,7 +19,7 @@ function Stat({ label, value, warn }) {
 }
 
 // ── Print run ────────────────────────────────────────────────────────────────
-function blankRun() { return { printed_on: today(), asset_id: '', design: '', blank_id: '', qty_good: '', qty_misprint: '', ink_per_piece: '', notes: '' } }
+function blankRun() { return { printed_on: today(), asset_id: '', design: '', blank_id: '', qty_good: '', qty_misprint: '', ink_per_piece: '', product_name: '', retail_price: '', notes: '' } }
 
 function RunTab({ blanks, assets, runs, onChange }) {
   const [form, setForm] = useState(blankRun())
@@ -51,7 +51,7 @@ function RunTab({ blanks, assets, runs, onChange }) {
     const design = form.design || asset?.name || ''
     const r = await window.api.house.runs.create({ ...form, design })
     if (r?.error) return setErr(r.error)
-    setForm(f => ({ ...blankRun(), printed_on: f.printed_on, asset_id: f.asset_id, design: f.design }))
+    setForm(f => ({ ...blankRun(), printed_on: f.printed_on, asset_id: f.asset_id, design: f.design, product_name: f.product_name, retail_price: f.retail_price }))
     setInkTouched(false)
     onChange()
   }
@@ -109,7 +109,15 @@ function RunTab({ blanks, assets, runs, onChange }) {
             <input type="number" min="0" step="0.01" className="input" value={form.ink_per_piece}
               onChange={e => { setInkTouched(true); set('ink_per_piece', e.target.value) }} placeholder="0.00" />
           </div>
-          <div className="col-span-6">
+          <div className="col-span-4">
+            <label className="label">Product name <span className="text-slate-600">(sends good prints to the Back Room)</span></label>
+            <input className="input" value={form.product_name} onChange={e => set('product_name', e.target.value)} placeholder="e.g. Skeleton Roses Tee" />
+          </div>
+          <div className="col-span-2">
+            <label className="label">Retail $</label>
+            <input type="number" min="0" step="0.01" className="input" value={form.retail_price} onChange={e => set('retail_price', e.target.value)} placeholder="45.00" />
+          </div>
+          <div className="col-span-12">
             <label className="label">Notes</label>
             <input className="input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
           </div>
@@ -340,8 +348,109 @@ function ReceiveTab({ receipts, onChange }) {
   )
 }
 
+
+// ── Back Room ────────────────────────────────────────────────────────────────
+const STATUS = {
+  back_room: ['Back Room', 'status-new'],
+  requested: ['Sent to Deck', 'status-printing'],
+  listed:    ['Listed', 'status-done'],
+}
+
+function PieceCard({ f, onChange }) {
+  const [price, setPrice] = useState(f.price ? String(f.price) : '')
+  const [err, setErr]     = useState('')
+  const per    = f.units ? f.cost_total / f.units : 0
+  const margin = f.price ? (f.price - per) / f.price : 0
+  const [label, cls] = STATUS[f.status] || STATUS.back_room
+  const locked = f.status !== 'back_room'
+
+  async function addPhotos() {
+    const picked = await window.api.openFile()
+    if (picked?.length) { await window.api.house.finished.update({ id: f.id, photos: [...f.photos, ...picked] }); onChange() }
+  }
+  async function removePhoto(p) { await window.api.house.finished.update({ id: f.id, photos: f.photos.filter(x => x !== p) }); onChange() }
+  async function savePrice() { if (price !== String(f.price)) { await window.api.house.finished.update({ id: f.id, price }); onChange() } }
+  async function send() {
+    setErr('')
+    await savePrice()
+    const r = await window.api.house.finished.request(f.id)
+    if (r?.error) return setErr(r.error)
+    onChange()
+  }
+
+  return (
+    <div className="card p-4 space-y-3">
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-white truncate">{f.name}</span>
+            <span className={cls}>{label}</span>
+          </div>
+          <div className="text-xs text-slate-500 mt-0.5">{f.style} · {f.color}</div>
+        </div>
+        <div className="text-right text-xs font-mono">
+          <div className="text-slate-400">cost {usd(per)}/pc</div>
+          {f.price > 0 && <div className={margin >= 0.5 ? 'text-green-300' : 'text-yellow-400'}>{(margin * 100).toFixed(0)}% margin</div>}
+        </div>
+      </div>
+
+      <div className="flex gap-1.5 flex-wrap">
+        {SIZES.filter(sz => f.sizes[sz]).map(sz => (
+          <span key={sz} className="px-2 py-1 rounded-md bg-white/5 text-xs font-mono"><span className="text-slate-400">{sz}</span> <span className="text-white font-bold">{f.sizes[sz]}</span></span>
+        ))}
+        <span className="px-2 py-1 text-xs font-mono text-slate-500">{f.units} pcs</span>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        {f.photos.map(p => (
+          <span key={p} className="group flex items-center gap-1 px-2 py-1 rounded-md bg-white/5 text-[11px] text-slate-300 max-w-[200px]">
+            <span className="truncate" title={p}>📷 {p.split('/').pop()}</span>
+            {!locked && <button onClick={() => removePhoto(p)} className="text-slate-600 hover:text-red-400">✕</button>}
+          </span>
+        ))}
+        {!locked && <button className="btn-xs" onClick={addPhotos}>+ Floor photos</button>}
+      </div>
+
+      {f.status === 'listed' ? (
+        <div className="text-xs text-green-300">On the site{f.shopify_url && <> · <span className="font-mono select-text">{f.shopify_url.replace(/^https?:\/\//, '')}</span></>}</div>
+      ) : f.status === 'requested' ? (
+        <div className="text-xs text-yellow-300/80">Waiting on Ava in the Deck. Hit <span className="text-white">Push to site</span> on the alert there.</div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-500">Retail $</span>
+          <input type="number" min="0" step="0.01" className="input-sm w-20" value={price} onChange={e => setPrice(e.target.value)} onBlur={savePrice} />
+          <div className="flex-1" />
+          {err && <span className="text-xs text-red-400">{err}</span>}
+          <button className="btn-primary" disabled={!f.photos.length || !(Number(price) > 0)} onClick={send}
+            title={!f.photos.length ? 'Add a floor photo first' : 'Hand this piece to Ava to list on the site'}>Send to Deck</button>
+        </div>
+      )}
+      {f.notes && <div className="text-xs text-red-300/80">{f.notes}</div>}
+    </div>
+  )
+}
+
+function BackRoomTab({ finished, onChange }) {
+  const [showListed, setShowListed] = useState(false)
+  const active = finished.filter(f => f.status !== 'listed')
+  const listed = finished.filter(f => f.status === 'listed')
+  if (!finished.length) return <div className="p-10 text-center text-sm text-slate-600">Nothing in the Back Room. Give a print run a <span className="text-slate-400">product name</span> and its good prints land here.</div>
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-slate-500">Printed and named, not on the site yet. When a piece hits the floor: add the photo, check the price, and send it to the Deck. Ava lists it with the cost per item, and Shopify takes over the count from there.</p>
+      <div className="grid grid-cols-2 gap-4">{active.map(f => <PieceCard key={f.id} f={f} onChange={onChange} />)}</div>
+      {listed.length > 0 && (
+        <div>
+          <button className="btn-xs" onClick={() => setShowListed(v => !v)}>{showListed ? 'Hide' : 'Show'} listed ({listed.length})</button>
+          {showListed && <div className="grid grid-cols-2 gap-4 mt-3">{listed.map(f => <PieceCard key={f.id} f={f} onChange={onChange} />)}</div>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
-const TABS = [['run', 'Print Run'], ['blanks', 'Blanks'], ['receive', 'Receive Order']]
+const TABS = [['run', 'Print Run'], ['backroom', 'Back Room'], ['blanks', 'Blanks'], ['receive', 'Receive Order']]
 
 export default function InHouse() {
   const [tab, setTab]           = useState('run')
@@ -350,16 +459,23 @@ export default function InHouse() {
   const [receipts, setReceipts] = useState([])
   const [assets, setAssets]     = useState([])
   const [sum, setSum]           = useState(null)
+  const [finished, setFinished] = useState([])
 
   const load = useCallback(async () => {
-    const [b, r, rc, s, a] = await Promise.all([
+    const [b, r, rc, s, a, f] = await Promise.all([
       window.api.house.blanks.list(), window.api.house.runs.list(), window.api.house.receipts(),
-      window.api.house.summary(), window.api.assets.list(),
+      window.api.house.summary(), window.api.assets.list(), window.api.house.finished.list(),
     ])
-    setBlanks(b || []); setRuns(r || []); setReceipts(rc || []); setSum(s); setAssets(a || [])
+    setBlanks(b || []); setRuns(r || []); setReceipts(rc || []); setSum(s); setAssets(a || []); setFinished(f || [])
   }, [])
 
   useEffect(() => { load() }, [load])
+  // Pick up Ava's "listed" results while a piece is waiting on the Deck.
+  useEffect(() => {
+    if (!finished.some(f => f.status === 'requested')) return
+    const t = setInterval(load, 5000)
+    return () => clearInterval(t)
+  }, [finished, load])
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -386,11 +502,13 @@ export default function InHouse() {
             <Stat label="Printed" value={sum.printed_good} />
             <Stat label="Misprint rate" value={`${(sum.misprint_rate * 100).toFixed(1)}%`} warn={sum.misprint_rate > 0.05} />
             <Stat label="Avg cost / piece" value={usd(sum.avg_cost_per_good)} />
+            <Stat label="Back Room" value={`${finished.filter(f => f.status !== 'listed').reduce((s, f) => s + f.units, 0)} pcs`} />
           </div>
         )}
       </div>
       <div className="flex-1 overflow-y-auto p-6">
         {tab === 'run'     && <RunTab blanks={blanks} assets={assets} runs={runs} onChange={load} />}
+        {tab === 'backroom' && <BackRoomTab finished={finished} onChange={load} />}
         {tab === 'blanks'  && <BlanksTab blanks={blanks} onChange={load} />}
         {tab === 'receive' && <ReceiveTab receipts={receipts} onChange={load} />}
       </div>

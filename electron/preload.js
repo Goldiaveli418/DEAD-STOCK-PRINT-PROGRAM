@@ -72,6 +72,11 @@ contextBridge.exposeInMainWorld('api', {
       delete: (id) => invoke('house:runs:delete', id),
     },
     summary:  ()   => invoke('house:summary'),
+    finished: {
+      list:    ()   => invoke('house:finished:list'),
+      update:  (d)  => invoke('house:finished:update', d),
+      request: (id) => invoke('house:finished:request', id),
+    },
   },
 
   // Shell

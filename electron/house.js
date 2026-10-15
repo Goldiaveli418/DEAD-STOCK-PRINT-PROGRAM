@@ -1,5 +1,11 @@
 // In-house production: our own blank stock + print runs. Separate from client orders
 // and client inventory. Cost = blank landed cost (unit + shipping share) + ink. No labor.
+// Good prints become finished pieces in the Back Room; "Send to Deck" hands a piece to Ava
+// (Ava Deck) to list on the Dead Stock Cincy site, and her result file flips it to Listed.
+
+const fs   = require('fs')
+const path = require('path')
+const os   = require('os')
 
 const r2 = n => Math.round((Number(n) || 0) * 100) / 100
 const r4 = n => Math.round((Number(n) || 0) * 1e6) / 1e6
@@ -9,6 +15,32 @@ function ensure(store) {
   store.houseReceipts = store.houseReceipts || []
   store.houseRuns     = store.houseRuns     || []
   store.houseLog      = store.houseLog      || []
+  store.houseFinished = store.houseFinished || []
+}
+
+const SIZE_ORDER = ['XS','S','M','L','XL','2XL','3XL','4XL']
+const pieceKey = (name, style, color) => [name, style, color].map(s => String(s || '').trim().toLowerCase()).join('|')
+
+// Add (or with a negative qty, remove) good prints from a finished piece in the Back Room.
+function bumpFinished(store, nextId, now, { name, style, color, size, qty, cost, price }) {
+  if (!name || !qty) return null
+  const k = pieceKey(name, style, color)
+  let f = store.houseFinished.find(x => pieceKey(x.name, x.style, x.color) === k && x.status !== 'listed')
+  if (!f) {
+    if (qty < 0) return null
+    f = { id: nextId(store.houseFinished), name: name.trim(), style, color, sizes: {}, size_costs: {}, cost_total: 0, units: 0,
+          price: Number(price) || 0, status: 'back_room', photos: [], shopify_url: '', notes: '', created_at: now() }
+    store.houseFinished.push(f)
+  }
+  f.size_costs = f.size_costs || {}
+  f.sizes[size] = Math.max(0, (f.sizes[size] || 0) + qty)
+  f.size_costs[size] = f.sizes[size] ? r4((f.size_costs[size] || 0) + qty * cost) : 0
+  if (!f.sizes[size]) { delete f.sizes[size]; delete f.size_costs[size] }
+  f.units      = Math.max(0, f.units + qty)
+  f.cost_total = f.units ? r4(f.cost_total + qty * cost) : 0
+  if (price && !f.price) f.price = Number(price)
+  if (f.units === 0 && f.status === 'back_room') store.houseFinished = store.houseFinished.filter(x => x !== f)
+  return f
 }
 
 function landed(b) {
@@ -132,12 +164,16 @@ function createRun(store, nextId, now, data) {
     ink_per_piece:   inkCost,
     total_cost:      total,
     cost_per_good:   good ? r2(total / good) : 0,
+    product_name:    String(data.product_name || '').trim(),
+    retail_price:    Number(data.retail_price) || 0,
     notes:           data.notes || '',
     created_at:      now(),
   }
   store.houseRuns.push(run)
   b.qty_on_hand = (Number(b.qty_on_hand) || 0) - used
   log(store, nextId, now, b.id, -used, `Run #${run.id}: ${run.design || 'untitled'}${mis ? ` (${mis} misprint)` : ''}`)
+  if (good && run.product_name) bumpFinished(store, nextId, now, {
+    name: run.product_name, style: b.style, color: b.color, size: b.size, qty: good, cost: run.cost_per_good, price: run.retail_price })
   return run
 }
 
@@ -152,8 +188,72 @@ function deleteRun(store, nextId, now, id) {
     b.qty_on_hand = (Number(b.qty_on_hand) || 0) + used
     log(store, nextId, now, b.id, used, `Run #${run.id} deleted`)
   }
+  if (run.product_name && run.qty_good) bumpFinished(store, nextId, now, {
+    name: run.product_name, style: b?.style, color: b?.color, size: b?.size, qty: -run.qty_good, cost: run.cost_per_good })
   store.houseRuns = store.houseRuns.filter(r => r.id !== id)
   return true
+}
+
+function updateFinished(store, data) {
+  ensure(store)
+  const f = store.houseFinished.find(x => x.id === data.id)
+  if (!f) return null
+  if (data.price !== undefined && data.price !== '') f.price = r2(data.price)
+  if (data.notes !== undefined) f.notes = data.notes
+  if (Array.isArray(data.photos)) f.photos = data.photos.filter(Boolean)
+  return f
+}
+
+// ── Hand-off to Ava Deck ─────────────────────────────────────────────────────
+const LISTINGS_DIR = path.join(os.homedir(), 'ava', 'inbox', 'listings')
+const FLAGS_FILE   = path.join(os.homedir(), 'ava', 'deck-app', 'flags.json')
+
+function requestListing(store, now, id, dirs = {}) {
+  ensure(store)
+  const f = store.houseFinished.find(x => x.id === id)
+  if (!f) return { error: 'Piece not found' }
+  if (!f.photos.length) return { error: 'Add at least one photo first' }
+  if (!(f.price > 0)) return { error: 'Set a retail price first' }
+  const dir   = dirs.listings || LISTINGS_DIR
+  const flags = dirs.flags || FLAGS_FILE
+  fs.mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, `printflow-${f.id}.json`)
+  const sizes = SIZE_ORDER.filter(s => f.sizes[s]).map(s => ({
+    size: s, qty: f.sizes[s], cost_per_item: r2((f.size_costs?.[s] || 0) / f.sizes[s]) }))
+  const req = {
+    source: 'PrintFlow', piece_id: f.id, requested_at: now(),
+    product_name: f.name, blank_style: f.style, color: f.color, sizes,
+    retail_price: f.price, cost_per_item: f.units ? r2(f.cost_total / f.units) : 0,
+    photos: f.photos, notes: f.notes,
+    result_file: path.join(dir, `printflow-${f.id}.result.json`),
+  }
+  fs.writeFileSync(file, JSON.stringify(req, null, 2))
+  // Flag in the Deck. The Deck builds the prompt itself from `action`; nothing here is free text it runs.
+  let list = []
+  try { list = JSON.parse(fs.readFileSync(flags, 'utf8')) } catch (_) {}
+  const title = `Listing ready: ${f.name}`.slice(0, 80)
+  list = list.filter(x => x.title !== title)
+  list.push({ title, msg: `${f.units} pcs · ${f.color} · $${f.price.toFixed(2)} · from PrintFlow Back Room`, ts: Date.now() / 1000,
+              action: { type: 'listing', file } })
+  fs.writeFileSync(flags, JSON.stringify(list, null, 2))
+  f.status = 'requested'; f.requested_at = now()
+  return f
+}
+
+// Ava writes printflow-<id>.result.json ({status:'listed', url} or {status:'failed', error}) when she's done.
+function syncResults(store, dirs = {}) {
+  ensure(store)
+  const dir = dirs.listings || LISTINGS_DIR
+  let changed = false
+  for (const f of store.houseFinished) {
+    if (f.status !== 'requested') continue
+    try {
+      const r = JSON.parse(fs.readFileSync(path.join(dir, `printflow-${f.id}.result.json`), 'utf8'))
+      if (r.status === 'listed') { f.status = 'listed'; f.shopify_url = r.url || ''; f.listed_at = r.listed_at || new Date().toISOString(); changed = true }
+      else if (r.status === 'failed') { f.status = 'back_room'; f.notes = `Listing failed: ${r.error || 'unknown'}`; changed = true }
+    } catch (_) {}
+  }
+  return changed
 }
 
 function summary(store) {
@@ -191,6 +291,9 @@ function register(ipcMain, ctx) {
   ipcMain.handle('house:runs:create', (_, d) => { const r = createRun(s(), nextId, now, d); if (!r.error) save(); return r })
   ipcMain.handle('house:runs:delete', (_, id) => { const r = deleteRun(s(), nextId, now, id); save(); return r })
   ipcMain.handle('house:summary', () => summary(s()))
+  ipcMain.handle('house:finished:list', () => { const st = s(); if (syncResults(st)) save(); return [...st.houseFinished].reverse() })
+  ipcMain.handle('house:finished:update', (_, d) => { const r = updateFinished(s(), d); save(); return r })
+  ipcMain.handle('house:finished:request', (_, id) => { const r = requestListing(s(), now, id); if (!r.error) save(); return r })
 }
 
-module.exports = { register, receive, createRun, deleteRun, adjust, updateBlank, summary, landed }
+module.exports = { register, receive, createRun, deleteRun, adjust, updateBlank, summary, landed, updateFinished, requestListing, syncResults }
