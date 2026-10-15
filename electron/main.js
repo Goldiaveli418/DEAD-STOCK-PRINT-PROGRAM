@@ -387,6 +387,9 @@ ipcMain.handle('interactions:delete', (_, id) => {
   return { ok: true }
 })
 
+// ── In-house production (own blanks + print runs, separate from client orders) ─
+require('./house').register(ipcMain, { getStore: () => store, save, nextId, now })
+
 // ── Inventory ─────────────────────────────────────────────────────────────────
 ipcMain.handle('inventory:list', () => {
   return [...store.inventory].sort((a, b) => {

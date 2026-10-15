@@ -9,6 +9,7 @@ import Pricing from './components/Pricing.jsx'
 import Production from './components/Production.jsx'
 import Schedule from './components/Schedule.jsx'
 import Inventory from './components/Inventory.jsx'
+import InHouse from './components/InHouse.jsx'
 import Reports from './components/Reports.jsx'
 import GlobalSearch from './components/GlobalSearch.jsx'
 
@@ -49,6 +50,7 @@ export default function App() {
           {page === 'schedule'   && <Schedule />}
           {page === 'assets'     && <Assets clientFilter={clientFilter} onClearFilter={() => setClientFilter(null)} />}
           {page === 'inventory'  && <Inventory />}
+          {page === 'inhouse'    && <InHouse />}
           {page === 'reports'    && <Reports />}
           {page === 'pricing'    && <Pricing />}
         </main>

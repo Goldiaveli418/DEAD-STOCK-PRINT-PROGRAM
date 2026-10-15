@@ -8,6 +8,7 @@ const NAV = [
   { id: 'schedule',   icon: '◫', label: 'Schedule'   },
   { id: 'assets',     icon: '⊞', label: 'Assets'     },
   { id: 'inventory',  icon: '▤', label: 'Inventory'  },
+  { id: 'inhouse',    icon: '◆', label: 'In-House'   },
   { id: 'reports',    icon: '◑', label: 'Reports'    },
   { id: 'pricing',    icon: '◷', label: 'Pricing'    },
 ]

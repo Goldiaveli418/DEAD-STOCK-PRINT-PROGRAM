@@ -56,6 +56,24 @@ contextBridge.exposeInMainWorld('api', {
     syncInkCosts: (d)   => invoke('assets:syncInkCosts', d),
   },
 
+  // In-house production
+  house: {
+    blanks: {
+      list:   ()   => invoke('house:blanks:list'),
+      update: (d)  => invoke('house:blanks:update', d),
+      adjust: (d)  => invoke('house:blanks:adjust', d),
+      delete: (id) => invoke('house:blanks:delete', id),
+    },
+    receive:  (d)  => invoke('house:receive', d),
+    receipts: ()   => invoke('house:receipts:list'),
+    runs: {
+      list:   ()   => invoke('house:runs:list'),
+      create: (d)  => invoke('house:runs:create', d),
+      delete: (id) => invoke('house:runs:delete', id),
+    },
+    summary:  ()   => invoke('house:summary'),
+  },
+
   // Shell
   openPath: (p) => invoke('shell:openPath', p),
 
