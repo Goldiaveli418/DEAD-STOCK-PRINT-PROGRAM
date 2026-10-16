@@ -250,6 +250,8 @@ ipcMain.handle('orders:update', (_, data) => {
       }
       store.orders[idx].inventory_deducted = 1
     }
+    // Dead Stock / customer-supplied blanks come off the first time the job hits Printing or Done
+    stock.deductForOrder(store, nextId, now, store.orders[idx])
     save()
   }
   return store.orders[idx]
@@ -272,6 +274,10 @@ ipcMain.handle('orders:duplicate', (_, orderId) => {
     sell_price: 0,
     paid:       0,
     created_at: now(),
+    inventory_deducted: 0,
+    stock_deducted:     0,
+    stock_notes:        '',
+    done_at:            '',
   }
   store.orders.push(newOrder)
   const srcItems = store.orderItems.filter(i => i.order_id === orderId)
@@ -313,6 +319,7 @@ ipcMain.handle('orderItems:save', (_, { orderId, items }) => {
       labor_base:                (item.labor_base == null ? 7 : Number(item.labor_base)),
       prints_on_garment:         Number(item.prints_on_garment) || 1,
       customer_supplied:         item.customer_supplied ? 1 : 0,
+      blank_style:               item.blank_style || '',
       asset_path:                item.asset_path || '',
       asset_name:                item.asset_name || '',
       item_assets:               item.item_assets || '',
@@ -321,6 +328,9 @@ ipcMain.handle('orderItems:save', (_, { orderId, items }) => {
       production_notes:          prev ? prev.production_notes : '',
     })
   }
+  // Items are saved after the order itself, so a job created/edited straight into Printing or Done
+  // takes its blanks here. deductForOrder only ever runs once per order.
+  stock.deductForOrder(store, nextId, now, store.orders.find(o => o.id === orderId))
   save()
   return { ok: true }
 })
@@ -332,6 +342,7 @@ ipcMain.handle('orders:markDone', (_, id) => {
   o.status  = 'done'
   o.done_at = now()
   for (const i of store.orderItems) if (i.order_id === id) i.completed = 1
+  stock.deductForOrder(store, nextId, now, o)
   save()
   return o
 })
@@ -400,6 +411,8 @@ ipcMain.handle('interactions:delete', (_, id) => {
 
 // ── In-house production (own blanks + print runs, separate from client orders) ─
 require('./house').register(ipcMain, { getStore: () => store, save, nextId, now })
+const stock = require('./stock')
+stock.register(ipcMain, { getStore: () => store, save, nextId, now })
 require('./reportExport').register(ipcMain, { getStore: () => store, dialog, getWin: () => win, app, fs, path, BrowserWindow })
 
 // ── Inventory ─────────────────────────────────────────────────────────────────

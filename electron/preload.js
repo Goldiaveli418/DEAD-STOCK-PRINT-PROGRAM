@@ -57,6 +57,17 @@ contextBridge.exposeInMainWorld('api', {
     syncInkCosts: (d)   => invoke('assets:syncInkCosts', d),
   },
 
+  // Customer-supplied blanks (per client) + blank picker choices for order items
+  clientBlanks: {
+    list:    (cid) => invoke('clientBlanks:list', cid),
+    receive: (d)   => invoke('clientBlanks:receive', d),
+    adjust:  (d)   => invoke('clientBlanks:adjust', d),
+    delete:  (id)  => invoke('clientBlanks:delete', id),
+  },
+  stock: {
+    choices: (d) => invoke('stock:choices', d),
+  },
+
   // In-house production
   house: {
     blanks: {

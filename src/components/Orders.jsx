@@ -221,6 +221,33 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
     setItems(its => its.map((item, i) => i !== idx ? item : { ...item, [k]: v }))
   }
 
+  // Blank picker: Dead Stock Blanks, or (Customer Blanks on) this client's supplied blanks.
+  const [shopChoices, setShopChoices]     = useState([])
+  const [clientChoices, setClientChoices] = useState([])
+  useEffect(() => { window.api.stock.choices({ source: 'shop' }).then(c => setShopChoices(c || [])) }, [])
+  useEffect(() => {
+    if (form.client_id) window.api.stock.choices({ source: 'client', client_id: Number(form.client_id) }).then(c => setClientChoices(c || []))
+    else setClientChoices([])
+  }, [form.client_id])
+
+  function pickBlank(idx, key) {
+    const supplied = !!items[idx]?.customer_supplied
+    const c = (supplied ? clientChoices : shopChoices).find(x => `${x.style}|${x.color}` === key)
+    setItems(its => its.map((item, i) => {
+      if (i !== idx) return item
+      if (!c) return { ...item, blank_style: '' }
+      const next = { ...item, blank_style: c.style, shirt_brand: c.style, shirt_color: c.color }
+      if (!supplied) {
+        // Our cost for a Dead Stock blank = its landed cost, averaged over the sizes on this item (or all sizes).
+        const used = Object.entries(item.sizes || {}).filter(([sz, q]) => Number(q) > 0 && c.costs[sz] != null)
+        const pairs = used.length ? used.map(([sz, q]) => [c.costs[sz], Number(q)]) : Object.values(c.costs).map(v => [v, 1])
+        const qty = pairs.reduce((s, [, q]) => s + q, 0)
+        if (qty) next.garment_cost_per_piece = (pairs.reduce((s, [v, q]) => s + v * q, 0) / qty).toFixed(2)
+      }
+      return next
+    }))
+  }
+
   function removeItem(idx) {
     if (items.length === 1) return
     setItems(i => i.filter((_, ii) => ii !== idx))
@@ -445,7 +472,7 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Item {idx + 1}</span>
                   <div className="flex items-center gap-3">
-                    <Toggle small on={!!item.customer_supplied} onChange={v => updateItem(idx, 'customer_supplied', v)} label="Customer Blanks" />
+                    <Toggle small on={!!item.customer_supplied} onChange={v => { updateItem(idx, 'customer_supplied', v); updateItem(idx, 'blank_style', '') }} label="Customer Blanks" />
                     {items.length > 1 && (
                       <button type="button" onClick={() => removeItem(idx)} className="text-[10px] text-red-400/50 hover:text-red-400 transition-colors">Remove</button>
                     )}
@@ -577,6 +604,30 @@ function OrderForm({ initial, clients, printTypes, onSave, onCancel, onRefresh }
                     </button>
                   )}
                 </div>
+
+                {/* Blank from inventory */}
+                {(() => {
+                  const list = item.customer_supplied ? clientChoices : shopChoices
+                  const key  = item.blank_style ? `${item.blank_style}|${item.shirt_color}` : ''
+                  const pick = list.find(c => `${c.style}|${c.color}` === key)
+                  const short = pick ? Object.entries(item.sizes || {}).filter(([sz, q]) => Number(q) > (pick.sizes[sz] || 0)).map(([sz]) => sz) : []
+                  return (
+                    <div>
+                      <label className="label">{item.customer_supplied ? "Blank from client's supplied stock" : 'Blank from Dead Stock'}</label>
+                      <select className="input text-xs py-1.5" value={key} onChange={e => pickBlank(idx, e.target.value)}>
+                        <option value="">{list.length ? '— Not from inventory (type below) —' : item.customer_supplied ? '— No blanks on file for this client —' : '— No Dead Stock blanks —'}</option>
+                        {list.map(c => <option key={`${c.style}|${c.color}`} value={`${c.style}|${c.color}`}>{c.style} · {c.color} · {c.on_hand} on hand</option>)}
+                      </select>
+                      {pick && (
+                        <div className="text-[10px] font-mono mt-1 text-slate-500">
+                          {Object.entries(pick.sizes).filter(([, q]) => q > 0).map(([sz, q]) => `${sz} ${q}`).join(' · ') || 'none on hand'}
+                          {short.length > 0 && <span className="text-red-400"> · not enough {short.join(', ')}</span>}
+                          <span className="text-slate-600"> · comes off when the job hits Printing or Done</span>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
 
                 {/* Shirt + print */}
                 <div className="grid grid-cols-2 gap-2">

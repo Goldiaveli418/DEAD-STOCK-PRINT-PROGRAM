@@ -224,7 +224,7 @@ function BlankRow({ b, onChange }) {
   )
 }
 
-function BlanksTab({ blanks, onChange }) {
+export function BlanksTab({ blanks, onChange }) {
   const [q, setQ] = useState('')
   const groups = useMemo(() => {
     const g = {}
@@ -237,7 +237,7 @@ function BlanksTab({ blanks, onChange }) {
     return g
   }, [blanks, q])
 
-  if (!blanks.length) return <div className="p-10 text-center text-sm text-slate-600">No blanks yet. Use <span className="text-slate-400">Receive Order</span> to add a supplier order.</div>
+  if (!blanks.length) return <div className="p-10 text-center text-sm text-slate-600">No Dead Stock blanks yet. Use <span className="text-slate-400">Receive Order</span> to add a supplier order.</div>
 
   return (
     <div className="space-y-4">
@@ -276,7 +276,7 @@ function parseLines(text) {
   }).filter(l => !/^sku$/i.test(l.sku) && l.qty > 0)
 }
 
-function ReceiveTab({ receipts, onChange }) {
+export function ReceiveTab({ receipts, onChange }) {
   const [form, setForm] = useState({ supplier: '', order_no: '', received_on: today(), shipping: '', text: '' })
   const [msg, setMsg]   = useState('')
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -450,7 +450,7 @@ function BackRoomTab({ finished, onChange }) {
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────────
-const TABS = [['run', 'Print Run'], ['backroom', 'Back Room'], ['blanks', 'Blanks'], ['receive', 'Receive Order']]
+const TABS = [['run', 'Print Run'], ['backroom', 'Back Room']]
 
 export default function InHouse() {
   const [tab, setTab]           = useState('run')
@@ -483,7 +483,7 @@ export default function InHouse() {
         <div className="flex items-end justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-lg font-bold text-white">In-House</h1>
-            <p className="text-xs text-slate-500">Our own blanks and prints. Separate from client orders. Cost = blank + shipping + ink, no labor.</p>
+            <p className="text-xs text-slate-500">Our own prints, drawn from Dead Stock Blanks (Inventory tab). Cost = blank + shipping + ink, no labor.</p>
           </div>
           <div className="flex gap-1 p-1 rounded-lg bg-white/5">
             {TABS.map(([id, label]) => (
@@ -509,8 +509,7 @@ export default function InHouse() {
       <div className="flex-1 overflow-y-auto p-6">
         {tab === 'run'     && <RunTab blanks={blanks} assets={assets} runs={runs} onChange={load} />}
         {tab === 'backroom' && <BackRoomTab finished={finished} onChange={load} />}
-        {tab === 'blanks'  && <BlanksTab blanks={blanks} onChange={load} />}
-        {tab === 'receive' && <ReceiveTab receipts={receipts} onChange={load} />}
+
       </div>
     </div>
   )
