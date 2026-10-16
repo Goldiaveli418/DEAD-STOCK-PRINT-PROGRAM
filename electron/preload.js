@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('api', {
     delete:    (id)  => invoke('orders:delete', id),
     duplicate: (id)  => invoke('orders:duplicate', id),
     setPaid:   (d)   => invoke('orders:setPaid', d),
+    markDone:  (id)  => invoke('orders:markDone', id),
   },
 
   // Order items
@@ -119,6 +120,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // Reports
   reports: {
-    get: (d) => invoke('reports:get', d),
+    get:    (d) => invoke('reports:get', d),
+    export: (d) => invoke('reports:export', d),
   },
 })

@@ -325,6 +325,17 @@ ipcMain.handle('orderItems:save', (_, { orderId, items }) => {
   return { ok: true }
 })
 
+// Quick "Done" from the Orders panel: status → done and every line item checked off in Production.
+ipcMain.handle('orders:markDone', (_, id) => {
+  const o = store.orders.find(x => x.id === id)
+  if (!o) return null
+  o.status  = 'done'
+  o.done_at = now()
+  for (const i of store.orderItems) if (i.order_id === id) i.completed = 1
+  save()
+  return o
+})
+
 ipcMain.handle('orderItems:setComplete', (_, { id, completed }) => {
   const idx = store.orderItems.findIndex(i => i.id === id)
   if (idx !== -1) {
@@ -389,6 +400,7 @@ ipcMain.handle('interactions:delete', (_, id) => {
 
 // ── In-house production (own blanks + print runs, separate from client orders) ─
 require('./house').register(ipcMain, { getStore: () => store, save, nextId, now })
+require('./reportExport').register(ipcMain, { getStore: () => store, dialog, getWin: () => win, app, fs, path, BrowserWindow })
 
 // ── Inventory ─────────────────────────────────────────────────────────────────
 ipcMain.handle('inventory:list', () => {

@@ -936,6 +936,11 @@ export default function Orders({ clientFilter, onClearFilter }) {
     load()
   }
 
+  async function handleMarkDone(id) {
+    await window.api.orders.markDone(id)
+    load()
+  }
+
   async function handleQuickStatus(order, status) {
     await window.api.orders.update({ ...order, status })
     load()
@@ -1045,6 +1050,15 @@ export default function Orders({ clientFilter, onClearFilter }) {
                           className="text-xs px-2 py-0.5 rounded bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 transition-colors border border-purple-500/10">
                           Text
                         </button>
+                        {['new', 'art', 'printing'].includes(o.status) && (
+                          <button
+                            onClick={() => handleMarkDone(o.id)}
+                            title="Mark this job done (checks off its items in Production)"
+                            className="text-xs px-2 py-0.5 rounded bg-green-500/10 hover:bg-green-500/20 text-green-400 transition-colors border border-green-500/15"
+                          >
+                            ✓ Done
+                          </button>
+                        )}
                         {['done', 'shipped'].includes(o.status) && (
                           <button
                             onClick={() => handleQuickStatus(o, 'invoiced')}

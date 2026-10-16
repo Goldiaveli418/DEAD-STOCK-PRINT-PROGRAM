@@ -190,6 +190,14 @@ export default function Reports() {
   const [data, setData]     = useState(null)
   const [loading, setLoading] = useState(false)
   const [activePreset, setActivePreset] = useState('This month')
+  const [dlOpen, setDlOpen] = useState(false)
+  const [dlMsg, setDlMsg]   = useState('')
+
+  async function download(format) {
+    setDlOpen(false); setDlMsg('')
+    const r = await window.api.reports.export({ format, from, to })
+    if (r?.ok) setDlMsg(`Saved ${r.filePath.split('/').pop()}`)
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -216,6 +224,7 @@ export default function Reports() {
             <h1 className="text-lg font-bold text-white">Reports</h1>
             <p className="text-xs text-slate-500">
               {from && to && from !== to ? `${from} → ${to}` : from === to && from ? from : 'All time'}
+              {dlMsg && <span className="ml-2 text-green-400">· {dlMsg}</span>}
             </p>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -232,6 +241,18 @@ export default function Reports() {
               <input type="date" className="input-sm w-36" value={from} onChange={e => { setFrom(e.target.value); setActivePreset('') }} />
               <span className="text-slate-600 text-xs">→</span>
               <input type="date" className="input-sm w-36" value={to} onChange={e => { setTo(e.target.value); setActivePreset('') }} />
+            </div>
+            <div className="relative ml-1">
+              <button onClick={() => setDlOpen(v => !v)}
+                className="px-3 h-7 text-xs rounded-lg bg-green-600/20 hover:bg-green-600/30 text-green-300 border border-green-500/20 transition-colors">
+                ⬇ Download
+              </button>
+              {dlOpen && (
+                <div className="absolute right-0 top-8 z-20 w-48 rounded-lg border border-white/10 bg-[#0e1018] shadow-xl overflow-hidden">
+                  <button onClick={() => download('pdf')} className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/5">PDF report<div className="text-[10px] text-slate-500">Summary, clients, orders, in-house</div></button>
+                  <button onClick={() => download('csv')} className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/5 border-t border-white/5">CSV spreadsheet<div className="text-[10px] text-slate-500">Every order line for Excel / Sheets</div></button>
+                </div>
+              )}
             </div>
           </div>
         </div>
